@@ -3,7 +3,7 @@ param(
     [string]$ExeName = "StarRuptureServerEOS.exe",
     [string]$RuntimeExeName = "StarRuptureServerEOS-Win64-Shipping.exe",
     [int]$TimeoutSeconds = 120,
-    [int]$TaskkillGraceSeconds = 120,
+    [int]$TaskkillGraceSeconds = 0,
     [switch]$NoForce
 )
 
@@ -40,6 +40,10 @@ function Get-ServerProcesses {
 }
 
 try {
+    if ($TaskkillGraceSeconds -le 0) {
+        $TaskkillGraceSeconds = $TimeoutSeconds
+    }
+
     Write-StopLog "Stop script started. ServerRoot=$ServerRoot PidPath=$pidPath StopRequestPath=$stopRequestPath TimeoutSeconds=$TimeoutSeconds TaskkillGraceSeconds=$TaskkillGraceSeconds NoForce=$NoForce."
 
     $allServerProcesses = Get-ServerProcesses
@@ -58,40 +62,10 @@ try {
         exit 0
     }
 
-    Write-StopLog "Creating stop request for server PID $($process.Id)."
-    Set-Content -Path $stopRequestPath -Value (Get-Date).ToUniversalTime().ToString("o") -Encoding ASCII
-    if (Test-Path $stopRequestPath) {
-        Write-StopLog "Stop request file created successfully."
-    } else {
-        Write-StopLog "Warning: stop request file was not found immediately after creation."
-    }
-
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $requestStillPresentLogged = $false
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 2
-        if (-not $requestStillPresentLogged -and (Test-Path $stopRequestPath) -and (Get-Date) -gt $deadline.AddSeconds(-1 * ($TimeoutSeconds - 10))) {
-            $requestStillPresentLogged = $true
-            Write-StopLog "Stop request still exists after 10 seconds. Supervisor may not be watching this path or may not be running."
-        }
-
-        $remaining = Get-ServerProcesses
-        if ($remaining.Count -eq 0) {
-            Write-StopLog "All StarRupture server processes exited after supervisor stop request."
-            Remove-Item -Path $pidPath -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path $stopRequestPath -Force -ErrorAction SilentlyContinue
-            exit 0
-        }
-    }
-
-    if ($NoForce) {
-        throw "Server did not exit within $TimeoutSeconds seconds after supervisor stop request."
-    }
-
     $remaining = Get-ServerProcesses
     if ($remaining.Count -gt 0) {
         $remainingSummary = ($remaining | ForEach-Object { "$($_.ProcessName):$($_.Id)" }) -join ", "
-        Write-StopLog "Server did not exit within $TimeoutSeconds seconds. Trying taskkill without /F for $($remaining.Count) process(es): $remainingSummary."
+        Write-StopLog "Trying taskkill without /F for $($remaining.Count) process(es): $remainingSummary."
 
         foreach ($item in $remaining) {
             $output = & taskkill.exe /PID $item.Id 2>&1
@@ -115,6 +89,10 @@ try {
                 exit 0
             }
         }
+    }
+
+    if ($NoForce) {
+        throw "Server did not exit within $TaskkillGraceSeconds seconds after taskkill without /F."
     }
 
     $remaining = Get-ServerProcesses
