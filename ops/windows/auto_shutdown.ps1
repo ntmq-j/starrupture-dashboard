@@ -8,7 +8,7 @@ param(
     [string]$StopServerScriptPath = "C:\starruptureserver\stop_server.ps1",
     [int]$StopServerTimeoutSeconds = 120,
     [string]$BackupScriptPath = "C:\starruptureserver\backup_save.ps1",
-    [int]$PreInstanceStopDelaySeconds = 30,
+    [int]$PreInstanceStopDelaySeconds = 15,
     [switch]$SkipServerStop,
     [switch]$SkipBackup,
     [switch]$SkipRecentSaveCheck

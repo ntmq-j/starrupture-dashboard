@@ -225,7 +225,7 @@ Create a Task Scheduler task:
 - Arguments:
 
 ```powershell
--ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2 -IdleMinutes 10 -IdleEosUpdateCycles 2 -SaveFreshnessMinutes 20 -PreInstanceStopDelaySeconds 30
+-ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2 -IdleMinutes 10 -IdleEosUpdateCycles 2 -SaveFreshnessMinutes 20 -PreInstanceStopDelaySeconds 15
 ```
 
 The script:
@@ -252,7 +252,7 @@ aws ec2 stop-instances --instance-ids $InstanceId --region ap-southeast-2
 You can tune the save freshness window:
 
 ```powershell
--ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2 -IdleMinutes 10 -IdleEosUpdateCycles 2 -SaveFreshnessMinutes 20 -PreInstanceStopDelaySeconds 30
+-ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2 -IdleMinutes 10 -IdleEosUpdateCycles 2 -SaveFreshnessMinutes 20 -PreInstanceStopDelaySeconds 15
 ```
 
 ### Manual Dashboard Stop
