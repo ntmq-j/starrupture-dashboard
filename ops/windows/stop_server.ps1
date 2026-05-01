@@ -3,6 +3,7 @@ param(
     [string]$ExeName = "StarRuptureServerEOS.exe",
     [string]$RuntimeExeName = "StarRuptureServerEOS-Win64-Shipping.exe",
     [int]$TimeoutSeconds = 120,
+    [int]$TaskkillGraceSeconds = 120,
     [switch]$NoForce
 )
 
@@ -39,7 +40,7 @@ function Get-ServerProcesses {
 }
 
 try {
-    Write-StopLog "Stop script started. ServerRoot=$ServerRoot PidPath=$pidPath StopRequestPath=$stopRequestPath TimeoutSeconds=$TimeoutSeconds NoForce=$NoForce."
+    Write-StopLog "Stop script started. ServerRoot=$ServerRoot PidPath=$pidPath StopRequestPath=$stopRequestPath TimeoutSeconds=$TimeoutSeconds TaskkillGraceSeconds=$TaskkillGraceSeconds NoForce=$NoForce."
 
     $allServerProcesses = Get-ServerProcesses
     if ($allServerProcesses.Count -gt 0) {
@@ -88,9 +89,42 @@ try {
     }
 
     $remaining = Get-ServerProcesses
+    if ($remaining.Count -gt 0) {
+        $remainingSummary = ($remaining | ForEach-Object { "$($_.ProcessName):$($_.Id)" }) -join ", "
+        Write-StopLog "Server did not exit within $TimeoutSeconds seconds. Trying taskkill without /F for $($remaining.Count) process(es): $remainingSummary."
+
+        foreach ($item in $remaining) {
+            $output = & taskkill.exe /PID $item.Id 2>&1
+            $exitCode = $LASTEXITCODE
+            $joinedOutput = ($output | Out-String).Trim()
+            if ($joinedOutput) {
+                Write-StopLog "taskkill /PID $($item.Id) exitCode=$exitCode output=$joinedOutput"
+            } else {
+                Write-StopLog "taskkill /PID $($item.Id) exitCode=$exitCode."
+            }
+        }
+
+        $taskkillDeadline = (Get-Date).AddSeconds($TaskkillGraceSeconds)
+        while ((Get-Date) -lt $taskkillDeadline) {
+            Start-Sleep -Seconds 2
+            $remaining = Get-ServerProcesses
+            if ($remaining.Count -eq 0) {
+                Write-StopLog "All StarRupture server processes exited after taskkill without /F."
+                Remove-Item -Path $pidPath -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path $stopRequestPath -Force -ErrorAction SilentlyContinue
+                exit 0
+            }
+        }
+    }
+
+    $remaining = Get-ServerProcesses
     $remainingSummary = ($remaining | ForEach-Object { "$($_.ProcessName):$($_.Id)" }) -join ", "
-    Write-StopLog "Server did not exit within $TimeoutSeconds seconds. Forcing process stop for $($remaining.Count) process(es): $remainingSummary."
-    $remaining | Stop-Process -Force
+    if ($remaining.Count -gt 0) {
+        Write-StopLog "Server did not exit within $TaskkillGraceSeconds seconds after taskkill without /F. Forcing process stop for $($remaining.Count) process(es): $remainingSummary."
+        $remaining | Stop-Process -Force
+    } else {
+        Write-StopLog "No StarRupture process remained before force stop."
+    }
     Remove-Item -Path $pidPath -Force -ErrorAction SilentlyContinue
     Remove-Item -Path $stopRequestPath -Force -ErrorAction SilentlyContinue
 } catch {
