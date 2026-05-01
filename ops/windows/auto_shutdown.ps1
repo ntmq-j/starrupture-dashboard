@@ -195,7 +195,7 @@ try {
                 Write-AutoShutdownLog "Player left, timed out, or closed connection. Count estimate: $($state.playerCount)"
             } elseif ($line -match "ControlChannelClose|Removed address") {
                 Write-AutoShutdownLog "Connection close activity observed without changing count estimate."
-            } elseif ($line -match "ScheduleNextSDKConfigDataUpdate" -and [int]$state.playerCount -eq 0) {
+            } elseif ($line -match "ScheduleNextSDKConfigDataUpdate" -and [int]$state.playerCount -eq 0 -and $state.idleSinceUtc) {
                 $state.eosUpdateCyclesSinceIdle = [int]$state.eosUpdateCyclesSinceIdle + 1
                 Write-AutoShutdownLog "Idle EOS update cycle observed. Count: $($state.eosUpdateCyclesSinceIdle)/$IdleEosUpdateCycles. Stopped=$($state.stopped)."
             }
