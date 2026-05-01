@@ -3,7 +3,10 @@ param(
     [string]$Region = $(if ($env:AWS_REGION) { $env:AWS_REGION } else { "ap-southeast-2" }),
     [string]$ServerRoot = "C:\starruptureserver",
     [int]$IdleMinutes = 10,
+    [string]$StopServerScriptPath = "C:\starruptureserver\stop_server.ps1",
+    [int]$StopServerTimeoutSeconds = 120,
     [string]$BackupScriptPath = "C:\starruptureserver\backup_save.ps1",
+    [switch]$SkipServerStop,
     [switch]$SkipBackup
 )
 
@@ -113,6 +116,15 @@ try {
 
         if ($idleFor.TotalMinutes -ge $IdleMinutes -and -not $state.stopped) {
             Write-AutoShutdownLog "Idle for $([Math]::Round($idleFor.TotalMinutes, 1)) minutes. Stopping EC2 instance $InstanceId in $Region."
+            if (-not $SkipServerStop) {
+                if (Test-Path $StopServerScriptPath) {
+                    Write-AutoShutdownLog "Requesting graceful game server exit with Ctrl+C."
+                    powershell.exe -ExecutionPolicy Bypass -File $StopServerScriptPath -ServerRoot $ServerRoot -TimeoutSeconds $StopServerTimeoutSeconds
+                    Write-AutoShutdownLog "Game server exit request completed."
+                } else {
+                    Write-AutoShutdownLog "Stop server script not found at $StopServerScriptPath; skipping graceful game server exit."
+                }
+            }
             if (-not $SkipBackup) {
                 if (Test-Path $BackupScriptPath) {
                     Write-AutoShutdownLog "Running save backup before shutdown."

@@ -160,6 +160,8 @@ Copy these files to the Windows instance:
 
 ```text
 ops/windows/start_server.bat      -> C:\starruptureserver\start_server.bat
+ops/windows/start_server.ps1      -> C:\starruptureserver\start_server.ps1
+ops/windows/stop_server.ps1       -> C:\starruptureserver\stop_server.ps1
 ops/windows/auto_shutdown.ps1     -> C:\starruptureserver\auto_shutdown.ps1
 ops/windows/backup_save.ps1       -> C:\starruptureserver\backup_save.ps1
 ```
@@ -188,9 +190,10 @@ Create a Task Scheduler task:
 `start_server.bat` runs:
 
 ```bat
-cd /d C:\starruptureserver
-StarRuptureServerEOS.exe -Log -port=7777
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\starruptureserver\start_server.ps1 -ServerRoot C:\starruptureserver -Port 7777
 ```
+
+`start_server.ps1` starts `StarRuptureServerEOS.exe -Log -port=7777`, writes the game server PID to `C:\starruptureserver\starrupture_server.pid`, and logs startup activity to `C:\starruptureserver\start_server.log`.
 
 ### Auto-shutdown After Idle
 
@@ -210,13 +213,28 @@ The script:
 - Tracks offset and player count in `C:\starruptureserver\auto_shutdown_state.json`.
 - Increments player count on `Join succeeded`.
 - Decrements player count on `UnregisterPlayers`, `ConnectionTimeout`, or `Removed address`.
-- After 10 minutes with `playerCount = 0`, runs `backup_save.ps1`, then:
+- After 10 minutes with `playerCount = 0`, sends Ctrl+C to the game server with `stop_server.ps1`.
+- `stop_server.ps1` waits up to 120 seconds for StarRupture to save and exit gracefully.
+- Then `auto_shutdown.ps1` runs `backup_save.ps1`, then:
 
 ```powershell
 aws ec2 stop-instances --instance-ids $InstanceId --region ap-southeast-2
 ```
 
 - Writes activity to `C:\starruptureserver\auto_shutdown.log`.
+
+You can manually test graceful server exit without stopping the instance:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File C:\starruptureserver\stop_server.ps1 -ServerRoot C:\starruptureserver -TimeoutSeconds 120
+```
+
+In StarRupture logs, a successful Ctrl+C shutdown should include lines like:
+
+```text
+Engine exit requested (reason: ConsoleCtrl RequestExit)
+Log file closed
+```
 
 ### Save Backups
 
