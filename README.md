@@ -235,7 +235,7 @@ The script:
 - Treats `ControlChannelClose` and `Removed address` as connection activity only, because StarRupture can log those alongside `UnregisterPlayers` for the same player.
 - Starts the idle timer only when the count estimate is 0.
 - After 10 idle minutes, sends Ctrl+C to the game server with `stop_server.ps1`.
-- `stop_server.ps1` waits up to 120 seconds for StarRupture to save and exit gracefully.
+- `stop_server.ps1` tries Ctrl+C, falls back to `taskkill` without `/F` if Windows denies console attachment, and waits up to 120 seconds for StarRupture to save and exit.
 - Then `auto_shutdown.ps1` runs `backup_save.ps1`, then:
 
 ```powershell
@@ -254,7 +254,7 @@ C:\starruptureserver\shutdown_now.ps1
 
 That script:
 
-- Sends Ctrl+C to StarRupture through `stop_server.ps1`.
+- Sends Ctrl+C to StarRupture through `stop_server.ps1`, or falls back to `taskkill` without `/F` if Windows denies console attachment.
 - Waits up to 120 seconds for the server to save and exit.
 - Runs `backup_save.ps1`.
 - Stops the EC2 instance with `aws ec2 stop-instances`.

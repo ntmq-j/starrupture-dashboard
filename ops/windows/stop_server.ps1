@@ -68,19 +68,21 @@ try {
     $attached = [ConsoleControl]::AttachConsole([uint32]$process.Id)
     if (-not $attached) {
         $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-        throw "AttachConsole failed for PID $($process.Id). Win32 error: $errorCode"
-    }
-
-    try {
-        $sent = [ConsoleControl]::GenerateConsoleCtrlEvent([ConsoleControl]::CTRL_C_EVENT, 0)
-        if (-not $sent) {
-            $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            throw "GenerateConsoleCtrlEvent failed. Win32 error: $errorCode"
+        Write-StopLog "AttachConsole failed for PID $($process.Id). Win32 error: $errorCode. Falling back to taskkill without /F."
+        & taskkill.exe /PID $process.Id /T | Out-Null
+    } else {
+        try {
+            $sent = [ConsoleControl]::GenerateConsoleCtrlEvent([ConsoleControl]::CTRL_C_EVENT, 0)
+            if (-not $sent) {
+                $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                Write-StopLog "GenerateConsoleCtrlEvent failed. Win32 error: $errorCode. Falling back to taskkill without /F."
+                & taskkill.exe /PID $process.Id /T | Out-Null
+            }
+        } finally {
+            Start-Sleep -Milliseconds 500
+            [ConsoleControl]::FreeConsole() | Out-Null
+            [ConsoleControl]::SetConsoleCtrlHandler([IntPtr]::Zero, $false) | Out-Null
         }
-    } finally {
-        Start-Sleep -Milliseconds 500
-        [ConsoleControl]::FreeConsole() | Out-Null
-        [ConsoleControl]::SetConsoleCtrlHandler([IntPtr]::Zero, $false) | Out-Null
     }
 
     $exited = $process.WaitForExit($TimeoutSeconds * 1000)
