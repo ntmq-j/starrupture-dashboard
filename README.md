@@ -209,10 +209,11 @@ Create a Task Scheduler task:
 `start_server.bat` runs:
 
 ```bat
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\starruptureserver\start_server.ps1 -ServerRoot C:\starruptureserver -Port 7777
+cd /d C:\starruptureserver
+start "" ".\StarRuptureServerEOS.exe" -Log -port=7777
 ```
 
-`start_server.ps1` starts StarRupture with `-Log -port=7777`, prefers the real runtime executable `StarRuptureServerEOS-Win64-Shipping.exe` when found, and writes the game server PID to `C:\starruptureserver\starrupture_server.pid`.
+This intentionally matches the launcher style shipped with the dedicated server. `start_server.ps1` remains available as a PowerShell equivalent, but Task Scheduler can use `start_server.bat` directly. Stop handling does not depend on a supervisor; `stop_server.ps1` detects the running StarRupture process by name.
 
 ### Auto-shutdown After Idle
 

@@ -1,2 +1,3 @@
 @echo off
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\starruptureserver\start_server.ps1 -ServerRoot C:\starruptureserver -Port 7777
+cd /d C:\starruptureserver
+start "" ".\StarRuptureServerEOS.exe" -Log -port=7777
