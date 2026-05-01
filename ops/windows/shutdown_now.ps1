@@ -5,6 +5,7 @@ param(
     [string]$StopServerScriptPath = "C:\starruptureserver\stop_server.ps1",
     [int]$StopServerTimeoutSeconds = 120,
     [string]$BackupScriptPath = "C:\starruptureserver\backup_save.ps1",
+    [int]$PreInstanceStopDelaySeconds = 30,
     [switch]$SkipServerStop,
     [switch]$SkipBackup
 )
@@ -24,7 +25,7 @@ try {
         throw "InstanceId is required. Pass -InstanceId or set EC2_INSTANCE_ID."
     }
 
-    Write-ShutdownLog "Manual graceful shutdown requested for instance $InstanceId in $Region."
+    Write-ShutdownLog "Manual graceful shutdown requested for instance $InstanceId in $Region. PreInstanceStopDelaySeconds=$PreInstanceStopDelaySeconds."
 
     if (-not $SkipServerStop) {
         if (Test-Path $StopServerScriptPath) {
@@ -46,8 +47,14 @@ try {
         }
     }
 
+    if ($PreInstanceStopDelaySeconds -gt 0) {
+        Write-ShutdownLog "Waiting $PreInstanceStopDelaySeconds seconds before stopping EC2 instance."
+        Start-Sleep -Seconds $PreInstanceStopDelaySeconds
+    }
+
     Write-ShutdownLog "Stopping EC2 instance."
     aws ec2 stop-instances --instance-ids $InstanceId --region $Region | Out-Null
+    Write-ShutdownLog "EC2 stop request sent."
 } catch {
     Write-ShutdownLog "Error: $($_.Exception.Message)"
     throw

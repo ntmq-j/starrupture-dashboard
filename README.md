@@ -225,7 +225,7 @@ Create a Task Scheduler task:
 - Arguments:
 
 ```powershell
--ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2
+-ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2 -IdleMinutes 10 -IdleEosUpdateCycles 2 -SaveFreshnessMinutes 20 -PreInstanceStopDelaySeconds 30
 ```
 
 The script:
@@ -241,7 +241,7 @@ The script:
 - If no recent save marker is found, the script writes a warning and waits for the next Task Scheduler run instead of stopping EC2.
 - If the server only emits background EOS heartbeat logs and no player activity has been observed, the script does not require a save marker because there is no gameplay progress to protect.
 - Once a recent save is confirmed, `stop_server.ps1` asks Windows to stop `StarRuptureServerEOS-Win64-Shipping.exe` using `taskkill` without `/F`, waits for exit, and only force-stops if the timeout expires.
-- Then `auto_shutdown.ps1` runs `backup_save.ps1`, then:
+- Then `auto_shutdown.ps1` runs `backup_save.ps1`, waits `PreInstanceStopDelaySeconds` seconds, then:
 
 ```powershell
 aws ec2 stop-instances --instance-ids $InstanceId --region ap-southeast-2
@@ -252,7 +252,7 @@ aws ec2 stop-instances --instance-ids $InstanceId --region ap-southeast-2
 You can tune the save freshness window:
 
 ```powershell
--ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2 -IdleMinutes 10 -IdleEosUpdateCycles 2 -SaveFreshnessMinutes 20
+-ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2 -IdleMinutes 10 -IdleEosUpdateCycles 2 -SaveFreshnessMinutes 20 -PreInstanceStopDelaySeconds 30
 ```
 
 ### Manual Dashboard Stop
@@ -267,6 +267,7 @@ That script:
 
 - Runs `stop_server.ps1`.
 - Runs `backup_save.ps1`.
+- Waits `PreInstanceStopDelaySeconds` seconds.
 - Stops the EC2 instance with `aws ec2 stop-instances`.
 - Writes `C:\starruptureserver\shutdown_now.log`.
 

@@ -8,6 +8,7 @@ param(
     [string]$StopServerScriptPath = "C:\starruptureserver\stop_server.ps1",
     [int]$StopServerTimeoutSeconds = 120,
     [string]$BackupScriptPath = "C:\starruptureserver\backup_save.ps1",
+    [int]$PreInstanceStopDelaySeconds = 30,
     [switch]$SkipServerStop,
     [switch]$SkipBackup,
     [switch]$SkipRecentSaveCheck
@@ -122,7 +123,7 @@ try {
         throw "InstanceId is required. Pass -InstanceId or set EC2_INSTANCE_ID."
     }
 
-    Write-AutoShutdownLog "Auto-shutdown check started. InstanceId=$InstanceId Region=$Region IdleMinutes=$IdleMinutes IdleEosUpdateCycles=$IdleEosUpdateCycles SaveFreshnessMinutes=$SaveFreshnessMinutes."
+    Write-AutoShutdownLog "Auto-shutdown check started. InstanceId=$InstanceId Region=$Region IdleMinutes=$IdleMinutes IdleEosUpdateCycles=$IdleEosUpdateCycles SaveFreshnessMinutes=$SaveFreshnessMinutes PreInstanceStopDelaySeconds=$PreInstanceStopDelaySeconds."
 
     if (-not (Test-Path $logDirectory)) {
         Write-AutoShutdownLog "Log directory not found: $logDirectory"
@@ -247,7 +248,13 @@ try {
                     Write-AutoShutdownLog "Backup script not found at $BackupScriptPath; skipping backup."
                 }
             }
+            if ($PreInstanceStopDelaySeconds -gt 0) {
+                Write-AutoShutdownLog "Waiting $PreInstanceStopDelaySeconds seconds before stopping EC2 instance."
+                Start-Sleep -Seconds $PreInstanceStopDelaySeconds
+            }
+            Write-AutoShutdownLog "Sending EC2 stop request."
             aws ec2 stop-instances --instance-ids $InstanceId --region $Region | Out-Null
+            Write-AutoShutdownLog "EC2 stop request sent."
             $state.stopped = $true
         } elseif (($hasEnoughIdleTime -or $hasEnoughIdleEosCycles) -and $state.stopped) {
             Write-AutoShutdownLog "Idle shutdown condition is met, but state is already marked stopped. Delete $statePath if this is a new boot/session."
