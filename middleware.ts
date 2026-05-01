@@ -5,7 +5,7 @@ const SESSION_COOKIE = "starrupture_session";
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isLoginPage = pathname === "/login";
-  const isProtectedPage = pathname === "/";
+  const isProtectedPage = pathname === "/dashboard";
   const isProtectedApi =
     pathname.startsWith("/api/") && !pathname.startsWith("/api/auth/login");
 
@@ -16,7 +16,7 @@ export async function middleware(request: NextRequest) {
   const isAuthed = await hasValidSession(request);
 
   if (isLoginPage && isAuthed) {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
   if ((isProtectedPage || isProtectedApi) && !isAuthed) {
@@ -63,5 +63,5 @@ async function sessionToken(password: string) {
 }
 
 export const config = {
-  matcher: ["/", "/login", "/api/:path*"],
+  matcher: ["/login", "/dashboard", "/api/:path*"],
 };
