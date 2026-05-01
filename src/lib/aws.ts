@@ -8,6 +8,8 @@ import {
 import {
   CloudWatchClient,
   GetMetricDataCommand,
+  ListMetricsCommand,
+  type Dimension,
   type MetricDataQuery,
   type StandardUnit,
 } from "@aws-sdk/client-cloudwatch";
@@ -154,24 +156,38 @@ export async function getInstanceMetrics() {
   const endTime = new Date();
   const startTime = new Date(endTime.getTime() - 60 * 60 * 1000);
   const customNamespace = process.env.CLOUDWATCH_AGENT_NAMESPACE || "CWAgent";
+  const [memoryDimensions, diskDimensions] = await Promise.all([
+    findMetricDimensions(customNamespace, "mem_used_percent"),
+    findMetricDimensions(customNamespace, "LogicalDisk % Free Space", (dimensions) =>
+      dimensions.some((dimension) => dimension.Name === "instance" && dimension.Value === "C:"),
+    ),
+  ]);
+
+  const metricDataQueries: MetricDataQuery[] = [
+    metricQuery("cpu", "AWS/EC2", "CPUUtilization", "Percent", "Average"),
+    metricQuery("networkIn", "AWS/EC2", "NetworkIn", "Bytes", "Sum"),
+    metricQuery("networkOut", "AWS/EC2", "NetworkOut", "Bytes", "Sum"),
+    metricQuery("diskReadBytes", "AWS/EC2", "DiskReadBytes", "Bytes", "Sum"),
+    metricQuery("diskWriteBytes", "AWS/EC2", "DiskWriteBytes", "Bytes", "Sum"),
+  ];
+
+  if (memoryDimensions) {
+    metricDataQueries.push(
+      metricQuery("memory", customNamespace, "mem_used_percent", "Percent", "Average", memoryDimensions),
+    );
+  }
+
+  if (diskDimensions) {
+    metricDataQueries.push(
+      metricQuery("disk", customNamespace, "LogicalDisk % Free Space", "Percent", "Average", diskDimensions),
+    );
+  }
 
   const response = await cloudWatchClient().send(
     new GetMetricDataCommand({
       StartTime: startTime,
       EndTime: endTime,
-      MetricDataQueries: [
-        metricQuery("cpu", "AWS/EC2", "CPUUtilization", "Percent", "Average"),
-        metricQuery("networkIn", "AWS/EC2", "NetworkIn", "Bytes", "Sum"),
-        metricQuery("networkOut", "AWS/EC2", "NetworkOut", "Bytes", "Sum"),
-        metricQuery("diskReadBytes", "AWS/EC2", "DiskReadBytes", "Bytes", "Sum"),
-        metricQuery("diskWriteBytes", "AWS/EC2", "DiskWriteBytes", "Bytes", "Sum"),
-        metricQuery("memory", customNamespace, "mem_used_percent", "Percent", "Average"),
-        metricQuery("disk", customNamespace, "LogicalDisk % Free Space", "Percent", "Average", [
-          { Name: "objectname", Value: "LogicalDisk" },
-          { Name: "InstanceId", Value: instanceId() },
-          { Name: "instance", Value: "C:" },
-        ]),
-      ],
+      MetricDataQueries: metricDataQueries,
     }),
   );
 
@@ -194,10 +210,12 @@ export async function getInstanceMetrics() {
     networkOutBytes: values.networkOut?.latest ?? null,
     diskReadBytes: values.diskReadBytes?.latest ?? null,
     diskWriteBytes: values.diskWriteBytes?.latest ?? null,
-    warning:
-      values.memory?.latest === null || values.disk?.latest === null
-        ? "Memory and disk free metrics require the CloudWatch Agent on Windows."
-        : null,
+    warning: buildMetricsWarning({
+      memoryMetricFound: Boolean(memoryDimensions),
+      diskMetricFound: Boolean(diskDimensions),
+      memoryValue: values.memory?.latest ?? null,
+      diskValue: values.disk?.latest ?? null,
+    }),
   };
 }
 
@@ -272,6 +290,71 @@ function metricQuery(
     },
     ReturnData: true,
   };
+}
+
+async function findMetricDimensions(
+  namespace: string,
+  metricName: string,
+  predicate: (dimensions: Dimension[]) => boolean = () => true,
+) {
+  const response = await cloudWatchClient().send(
+    new ListMetricsCommand({
+      Namespace: namespace,
+      MetricName: metricName,
+      Dimensions: [{ Name: "InstanceId", Value: instanceId() }],
+    }),
+  );
+
+  const metric = response.Metrics?.find((candidate) => {
+    const dimensions = candidate.Dimensions ?? [];
+    return dimensions.some((dimension) => dimension.Name === "InstanceId" && dimension.Value === instanceId())
+      && predicate(dimensions);
+  });
+
+  return normalizeDimensions(metric?.Dimensions);
+}
+
+function normalizeDimensions(dimensions?: Dimension[]) {
+  const normalized =
+    dimensions
+      ?.filter((dimension): dimension is { Name: string; Value: string } =>
+        Boolean(dimension.Name && dimension.Value),
+      )
+      .map((dimension) => ({ Name: dimension.Name, Value: dimension.Value })) ?? [];
+
+  return normalized.length ? normalized : null;
+}
+
+function buildMetricsWarning({
+  memoryMetricFound,
+  diskMetricFound,
+  memoryValue,
+  diskValue,
+}: {
+  memoryMetricFound: boolean;
+  diskMetricFound: boolean;
+  memoryValue: number | null;
+  diskValue: number | null;
+}) {
+  const missing = [];
+
+  if (!memoryMetricFound) {
+    missing.push("memory metric");
+  } else if (memoryValue === null) {
+    missing.push("recent memory datapoint");
+  }
+
+  if (!diskMetricFound) {
+    missing.push("disk free metric");
+  } else if (diskValue === null) {
+    missing.push("recent disk free datapoint");
+  }
+
+  if (!missing.length) {
+    return null;
+  }
+
+  return `CloudWatch Agent is running, but the dashboard could not find ${missing.join(" and ")} yet.`;
 }
 
 function latestValue(values?: number[]) {
