@@ -30,6 +30,8 @@ using System.Threading;
 public static class StarRuptureSupervisor {
     private const int CTRL_C_EVENT = 0;
     private const int CTRL_BREAK_EVENT = 1;
+    private const uint CREATE_NEW_PROCESS_GROUP = 0x00000200;
+    private const uint WAIT_TIMEOUT = 0x00000102;
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AllocConsole();
@@ -43,56 +45,121 @@ public static class StarRuptureSupervisor {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetConsoleCtrlHandler(IntPtr handlerRoutine, bool add);
 
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CreateProcess(
+        string applicationName,
+        string commandLine,
+        IntPtr processAttributes,
+        IntPtr threadAttributes,
+        bool inheritHandles,
+        uint creationFlags,
+        IntPtr environment,
+        string currentDirectory,
+        ref STARTUPINFO startupInfo,
+        out PROCESS_INFORMATION processInformation
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(IntPtr processHandle, out uint exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct STARTUPINFO {
+        public uint cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public uint dwX;
+        public uint dwY;
+        public uint dwXSize;
+        public uint dwYSize;
+        public uint dwXCountChars;
+        public uint dwYCountChars;
+        public uint dwFillAttribute;
+        public uint dwFlags;
+        public ushort wShowWindow;
+        public ushort cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROCESS_INFORMATION {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public uint dwProcessId;
+        public uint dwThreadId;
+    }
+
     public static int Run(string exePath, string workingDirectory, string arguments, string pidPath, string stopRequestPath, string logPath) {
         Directory.CreateDirectory(workingDirectory);
         AppendLog(logPath, "Supervisor allocating console.");
         AllocConsole();
 
-        var startInfo = new ProcessStartInfo {
-            FileName = exePath,
-            Arguments = arguments,
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false
-        };
+        var startupInfo = new STARTUPINFO();
+        startupInfo.cb = (uint)Marshal.SizeOf(typeof(STARTUPINFO));
+        var commandLine = "\"" + exePath + "\" " + arguments;
+        PROCESS_INFORMATION processInformation;
+        bool created = CreateProcess(
+            exePath,
+            commandLine,
+            IntPtr.Zero,
+            IntPtr.Zero,
+            true,
+            CREATE_NEW_PROCESS_GROUP,
+            IntPtr.Zero,
+            workingDirectory,
+            ref startupInfo,
+            out processInformation
+        );
 
-        using (var process = Process.Start(startInfo)) {
-            if (process == null) {
-                throw new InvalidOperationException("Failed to start server process.");
-            }
+        if (!created) {
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Failed to start server process.");
+        }
 
+        try {
             SetConsoleCtrlHandler(IntPtr.Zero, true);
-            File.WriteAllText(pidPath, process.Id.ToString());
+            File.WriteAllText(pidPath, processInformation.dwProcessId.ToString());
             if (File.Exists(stopRequestPath)) {
                 File.Delete(stopRequestPath);
             }
-            AppendLog(logPath, "Started server PID " + process.Id + ".");
+            AppendLog(logPath, "Started server PID " + processInformation.dwProcessId + " in its own process group.");
 
             bool stopSent = false;
-            while (!process.HasExited) {
+            while (WaitForSingleObject(processInformation.hProcess, 1000) == WAIT_TIMEOUT) {
                 if (!stopSent && File.Exists(stopRequestPath)) {
                     stopSent = true;
-                    AppendLog(logPath, "Stop request detected. Sending Ctrl+C to console.");
+                    AppendLog(logPath, "Stop request detected. Sending Ctrl+Break to process group " + processInformation.dwProcessId + ".");
                     try { File.Delete(stopRequestPath); } catch {}
-                    bool sent = GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
-                    AppendLog(logPath, "GenerateConsoleCtrlEvent result: " + sent + ".");
+                    bool breakSent = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, processInformation.dwProcessId);
+                    AppendLog(logPath, "GenerateConsoleCtrlEvent Ctrl+Break result: " + breakSent + ".");
                     Thread.Sleep(10000);
-                    process.Refresh();
-                    if (!process.HasExited) {
-                        AppendLog(logPath, "Server still running after Ctrl+C. Sending Ctrl+Break to console.");
-                        bool breakSent = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0);
-                        AppendLog(logPath, "GenerateConsoleCtrlEvent Ctrl+Break result: " + breakSent + ".");
+                    if (WaitForSingleObject(processInformation.hProcess, 0) == WAIT_TIMEOUT) {
+                        AppendLog(logPath, "Server still running after targeted Ctrl+Break. Sending Ctrl+C to console.");
+                        bool ctrlCSent = GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
+                        AppendLog(logPath, "GenerateConsoleCtrlEvent Ctrl+C result: " + ctrlCSent + ".");
                     }
                 }
-
-                Thread.Sleep(1000);
-                process.Refresh();
             }
 
-            int exitCode = process.ExitCode;
-            AppendLog(logPath, "Server PID " + process.Id + " exited with code " + exitCode + ".");
+            uint exitCode;
+            if (!GetExitCodeProcess(processInformation.hProcess, out exitCode)) {
+                exitCode = 1;
+            }
+            AppendLog(logPath, "Server PID " + processInformation.dwProcessId + " exited with code " + exitCode + ".");
             try { File.Delete(pidPath); } catch {}
             FreeConsole();
-            return exitCode;
+            return unchecked((int)exitCode);
+        } finally {
+            CloseHandle(processInformation.hThread);
+            CloseHandle(processInformation.hProcess);
         }
     }
 
