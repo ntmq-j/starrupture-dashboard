@@ -26,7 +26,7 @@ Browser -> Vercel Next.js Dashboard -> AWS SDK server-side -> EC2 Windows
                                                    +-> SSM SecureString server password
 
 EC2 Windows boot -> Task Scheduler -> start_server.bat -> StarRuptureServerEOS.exe
-EC2 Windows timer -> auto_shutdown.ps1 -> backup_save.ps1 -> S3 -> stop EC2 after 10 idle minutes
+EC2 Windows timer -> auto_shutdown.ps1 -> recent save check -> backup_save.ps1 -> S3 -> stop EC2 after 10 idle minutes
 ```
 
 ## Local Development
@@ -212,7 +212,7 @@ Create a Task Scheduler task:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\starruptureserver\start_server.ps1 -ServerRoot C:\starruptureserver -Port 7777
 ```
 
-`start_server.ps1` starts a lightweight supervisor that allocates a console, prefers the real runtime executable `StarRuptureServerEOS-Win64-Shipping.exe` when found, launches the server with `-Log -port=7777`, writes the game server PID to `C:\starruptureserver\starrupture_server.pid`, watches for `C:\starruptureserver\starrupture_server.stop`, and sends Ctrl+C to the game server from the same console when a stop request appears.
+`start_server.ps1` starts StarRupture with `-Log -port=7777`, prefers the real runtime executable `StarRuptureServerEOS-Win64-Shipping.exe` when found, and writes the game server PID to `C:\starruptureserver\starrupture_server.pid`.
 
 ### Auto-shutdown After Idle
 
@@ -234,8 +234,10 @@ The script:
 - Decrements the player count estimate on `UnregisterPlayers` or `ConnectionTimeout`.
 - Treats `ControlChannelClose` and `Removed address` as connection activity only, because StarRupture can log those alongside `UnregisterPlayers` for the same player.
 - Starts the idle timer only when the count estimate is 0.
-- After 10 idle minutes, sends Ctrl+C to the game server with `stop_server.ps1`.
-- `stop_server.ps1` creates `C:\starruptureserver\starrupture_server.stop`; the supervisor started by `start_server.ps1` sees that file and sends Ctrl+C from the same console, then `stop_server.ps1` waits up to 120 seconds for StarRupture to save and exit.
+- After 10 idle minutes, requires a recent save marker before shutting down. By default the marker must be within 20 minutes.
+- Save markers are `UCrMassSaveSubsystem, Saved ... loaded items` or `bSuccess: true` in the StarRupture log.
+- If no recent save marker is found, the script writes a warning and waits for the next Task Scheduler run instead of stopping EC2.
+- Once a recent save is confirmed, `stop_server.ps1` asks Windows to stop `StarRuptureServerEOS-Win64-Shipping.exe` using `taskkill` without `/F`, waits for exit, and only force-stops if the timeout expires.
 - Then `auto_shutdown.ps1` runs `backup_save.ps1`, then:
 
 ```powershell
@@ -243,6 +245,12 @@ aws ec2 stop-instances --instance-ids $InstanceId --region ap-southeast-2
 ```
 
 - Writes activity to `C:\starruptureserver\auto_shutdown.log`.
+
+You can tune the save freshness window:
+
+```powershell
+-ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2 -IdleMinutes 10 -SaveFreshnessMinutes 20
+```
 
 ### Manual Dashboard Stop
 
@@ -254,25 +262,25 @@ C:\starruptureserver\shutdown_now.ps1
 
 That script:
 
-- Sends Ctrl+C to StarRupture through the `start_server.ps1` supervisor by creating a stop-request file with `stop_server.ps1`.
-- Waits up to 120 seconds for the server to save and exit.
+- Runs `stop_server.ps1`.
 - Runs `backup_save.ps1`.
 - Stops the EC2 instance with `aws ec2 stop-instances`.
 - Writes `C:\starruptureserver\shutdown_now.log`.
 
 If the instance is already stopped, the API falls back to direct EC2 stop.
 
-You can manually test graceful server exit without stopping the instance:
+You can manually test server stop without stopping the instance:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File C:\starruptureserver\stop_server.ps1 -ServerRoot C:\starruptureserver -TimeoutSeconds 120
 ```
 
-In StarRupture logs, a successful Ctrl+C shutdown should include lines like:
+`stop_server.ps1` uses `taskkill /PID` without `/F`; do not add `/F` because that is a hard kill. In StarRupture logs, a graceful manual Ctrl+C shutdown includes lines like:
 
 ```text
 Engine exit requested (reason: ConsoleCtrl RequestExit)
-Log file closed
+PreExit Game.
+Preparing to exit.
 ```
 
 ### Save Backups

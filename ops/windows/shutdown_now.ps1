@@ -28,11 +28,11 @@ try {
 
     if (-not $SkipServerStop) {
         if (Test-Path $StopServerScriptPath) {
-            Write-ShutdownLog "Requesting graceful game server exit with Ctrl+C."
+            Write-ShutdownLog "Requesting game server stop."
             powershell.exe -ExecutionPolicy Bypass -File $StopServerScriptPath -ServerRoot $ServerRoot -TimeoutSeconds $StopServerTimeoutSeconds
-            Write-ShutdownLog "Game server exit request completed."
+            Write-ShutdownLog "Game server stop request completed."
         } else {
-            Write-ShutdownLog "Stop server script not found at $StopServerScriptPath; skipping graceful game server exit."
+            Write-ShutdownLog "Stop server script not found at $StopServerScriptPath; skipping game server stop."
         }
     }
 
