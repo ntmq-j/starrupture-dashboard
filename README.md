@@ -212,7 +212,7 @@ Create a Task Scheduler task:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\starruptureserver\start_server.ps1 -ServerRoot C:\starruptureserver -Port 7777
 ```
 
-`start_server.ps1` starts `StarRuptureServerEOS.exe -Log -port=7777`, writes the game server PID to `C:\starruptureserver\starrupture_server.pid`, and logs startup activity to `C:\starruptureserver\start_server.log`.
+`start_server.ps1` starts a lightweight supervisor that allocates a console, launches `StarRuptureServerEOS.exe -Log -port=7777`, writes the game server PID to `C:\starruptureserver\starrupture_server.pid`, watches for `C:\starruptureserver\starrupture_server.stop`, and sends Ctrl+C to the game server from the same console when a stop request appears.
 
 ### Auto-shutdown After Idle
 
@@ -235,7 +235,7 @@ The script:
 - Treats `ControlChannelClose` and `Removed address` as connection activity only, because StarRupture can log those alongside `UnregisterPlayers` for the same player.
 - Starts the idle timer only when the count estimate is 0.
 - After 10 idle minutes, sends Ctrl+C to the game server with `stop_server.ps1`.
-- `stop_server.ps1` tries Ctrl+C, falls back to `taskkill` without `/F` if Windows denies console attachment, and waits up to 120 seconds for StarRupture to save and exit.
+- `stop_server.ps1` creates `C:\starruptureserver\starrupture_server.stop`; the supervisor started by `start_server.ps1` sees that file and sends Ctrl+C from the same console, then `stop_server.ps1` waits up to 120 seconds for StarRupture to save and exit.
 - Then `auto_shutdown.ps1` runs `backup_save.ps1`, then:
 
 ```powershell
@@ -254,7 +254,7 @@ C:\starruptureserver\shutdown_now.ps1
 
 That script:
 
-- Sends Ctrl+C to StarRupture through `stop_server.ps1`, or falls back to `taskkill` without `/F` if Windows denies console attachment.
+- Sends Ctrl+C to StarRupture through the `start_server.ps1` supervisor by creating a stop-request file with `stop_server.ps1`.
 - Waits up to 120 seconds for the server to save and exit.
 - Runs `backup_save.ps1`.
 - Stops the EC2 instance with `aws ec2 stop-instances`.
