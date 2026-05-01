@@ -29,6 +29,7 @@ using System.Threading;
 
 public static class StarRuptureSupervisor {
     private const int CTRL_C_EVENT = 0;
+    private const int CTRL_BREAK_EVENT = 1;
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AllocConsole();
@@ -46,7 +47,6 @@ public static class StarRuptureSupervisor {
         Directory.CreateDirectory(workingDirectory);
         AppendLog(logPath, "Supervisor allocating console.");
         AllocConsole();
-        SetConsoleCtrlHandler(IntPtr.Zero, true);
 
         var startInfo = new ProcessStartInfo {
             FileName = exePath,
@@ -60,6 +60,7 @@ public static class StarRuptureSupervisor {
                 throw new InvalidOperationException("Failed to start server process.");
             }
 
+            SetConsoleCtrlHandler(IntPtr.Zero, true);
             File.WriteAllText(pidPath, process.Id.ToString());
             if (File.Exists(stopRequestPath)) {
                 File.Delete(stopRequestPath);
@@ -74,6 +75,13 @@ public static class StarRuptureSupervisor {
                     try { File.Delete(stopRequestPath); } catch {}
                     bool sent = GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
                     AppendLog(logPath, "GenerateConsoleCtrlEvent result: " + sent + ".");
+                    Thread.Sleep(10000);
+                    process.Refresh();
+                    if (!process.HasExited) {
+                        AppendLog(logPath, "Server still running after Ctrl+C. Sending Ctrl+Break to console.");
+                        bool breakSent = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0);
+                        AppendLog(logPath, "GenerateConsoleCtrlEvent Ctrl+Break result: " + breakSent + ".");
+                    }
                 }
 
                 Thread.Sleep(1000);
