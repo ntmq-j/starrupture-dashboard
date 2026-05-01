@@ -32,6 +32,10 @@ public static class StarRuptureSupervisor {
     private const int CTRL_BREAK_EVENT = 1;
     private const uint CREATE_NEW_PROCESS_GROUP = 0x00000200;
     private const uint WAIT_TIMEOUT = 0x00000102;
+    private const int STD_INPUT_HANDLE = -10;
+    private const ushort KEY_EVENT = 0x0001;
+    private const ushort VK_C = 0x43;
+    private const uint LEFT_CTRL_PRESSED = 0x0008;
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AllocConsole();
@@ -68,6 +72,12 @@ public static class StarRuptureSupervisor {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetStdHandle(int standardHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool WriteConsoleInput(IntPtr consoleInput, INPUT_RECORD[] buffer, uint length, out uint numberOfEventsWritten);
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct STARTUPINFO {
         public uint cb;
@@ -96,6 +106,26 @@ public static class StarRuptureSupervisor {
         public IntPtr hThread;
         public uint dwProcessId;
         public uint dwThreadId;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct INPUT_RECORD {
+        [FieldOffset(0)]
+        public ushort EventType;
+
+        [FieldOffset(4)]
+        public KEY_EVENT_RECORD KeyEvent;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct KEY_EVENT_RECORD {
+        [MarshalAs(UnmanagedType.Bool)]
+        public bool bKeyDown;
+        public ushort wRepeatCount;
+        public ushort wVirtualKeyCode;
+        public ushort wVirtualScanCode;
+        public char UnicodeChar;
+        public uint dwControlKeyState;
     }
 
     public static int Run(string exePath, string workingDirectory, string arguments, string pidPath, string stopRequestPath, string logPath) {
@@ -136,10 +166,18 @@ public static class StarRuptureSupervisor {
             while (WaitForSingleObject(processInformation.hProcess, 1000) == WAIT_TIMEOUT) {
                 if (!stopSent && File.Exists(stopRequestPath)) {
                     stopSent = true;
-                    AppendLog(logPath, "Stop request detected. Sending Ctrl+Break to process group " + processInformation.dwProcessId + ".");
+                    AppendLog(logPath, "Stop request detected. Writing Ctrl+C keyboard input to console.");
                     try { File.Delete(stopRequestPath); } catch {}
-                    bool breakSent = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, processInformation.dwProcessId);
-                    AppendLog(logPath, "GenerateConsoleCtrlEvent Ctrl+Break result: " + breakSent + ".");
+                    bool inputSent = WriteCtrlCToConsoleInput(logPath);
+                    AppendLog(logPath, "WriteConsoleInput Ctrl+C result: " + inputSent + ".");
+                    Thread.Sleep(10000);
+
+                    if (WaitForSingleObject(processInformation.hProcess, 0) == WAIT_TIMEOUT) {
+                        AppendLog(logPath, "Server still running after keyboard Ctrl+C. Sending Ctrl+Break to process group " + processInformation.dwProcessId + ".");
+                        bool breakSent = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, processInformation.dwProcessId);
+                        AppendLog(logPath, "GenerateConsoleCtrlEvent Ctrl+Break result: " + breakSent + ".");
+                    }
+
                     Thread.Sleep(10000);
                     if (WaitForSingleObject(processInformation.hProcess, 0) == WAIT_TIMEOUT) {
                         AppendLog(logPath, "Server still running after targeted Ctrl+Break. Sending Ctrl+C to console.");
@@ -161,6 +199,48 @@ public static class StarRuptureSupervisor {
             CloseHandle(processInformation.hThread);
             CloseHandle(processInformation.hProcess);
         }
+    }
+
+    private static bool WriteCtrlCToConsoleInput(string logPath) {
+        IntPtr inputHandle = GetStdHandle(STD_INPUT_HANDLE);
+        if (inputHandle == IntPtr.Zero || inputHandle == new IntPtr(-1)) {
+            AppendLog(logPath, "GetStdHandle(STD_INPUT_HANDLE) failed: " + Marshal.GetLastWin32Error() + ".");
+            return false;
+        }
+
+        var records = new INPUT_RECORD[2];
+        records[0] = new INPUT_RECORD {
+            EventType = KEY_EVENT,
+            KeyEvent = new KEY_EVENT_RECORD {
+                bKeyDown = true,
+                wRepeatCount = 1,
+                wVirtualKeyCode = VK_C,
+                wVirtualScanCode = 0,
+                UnicodeChar = '\u0003',
+                dwControlKeyState = LEFT_CTRL_PRESSED
+            }
+        };
+        records[1] = new INPUT_RECORD {
+            EventType = KEY_EVENT,
+            KeyEvent = new KEY_EVENT_RECORD {
+                bKeyDown = false,
+                wRepeatCount = 1,
+                wVirtualKeyCode = VK_C,
+                wVirtualScanCode = 0,
+                UnicodeChar = '\u0003',
+                dwControlKeyState = LEFT_CTRL_PRESSED
+            }
+        };
+
+        uint written;
+        bool result = WriteConsoleInput(inputHandle, records, (uint)records.Length, out written);
+        if (!result) {
+            AppendLog(logPath, "WriteConsoleInput failed: " + Marshal.GetLastWin32Error() + ".");
+        } else if (written != records.Length) {
+            AppendLog(logPath, "WriteConsoleInput wrote " + written + " of " + records.Length + " events.");
+        }
+
+        return result && written == records.Length;
     }
 
     private static void AppendLog(string path, string message) {
