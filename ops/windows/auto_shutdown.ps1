@@ -98,7 +98,7 @@ try {
 
     if ($newText) {
         foreach ($line in ($newText -split "`r?`n")) {
-            if ($line -match "Join succeeded|Login request|NotifyAcceptingConnection|AddClientConnection") {
+            if ($line -match "Join succeeded") {
                 $state.playerCount = [int]$state.playerCount + 1
                 $state.idleSinceUtc = $null
                 $state.idleCandidateSinceUtc = $null
@@ -118,8 +118,7 @@ try {
         }
     }
 
-    $hasIdleCandidate = [bool]$state.idleCandidateSinceUtc
-    if ([int]$state.playerCount -eq 0 -or $hasIdleCandidate) {
+    if ([int]$state.playerCount -eq 0) {
         if (-not $state.idleSinceUtc) {
             $state.idleSinceUtc = $(if ($state.idleCandidateSinceUtc) { $state.idleCandidateSinceUtc } else { (Get-Date).ToUniversalTime().ToString("o") })
             Write-AutoShutdownLog "Server became idle."
