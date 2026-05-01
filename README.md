@@ -1,0 +1,251 @@
+# StarRupture Dashboard
+
+A secure Next.js TypeScript App Router dashboard for a StarRupture Dedicated Server running on an AWS EC2 Windows instance.
+
+The dashboard is intended to run on Vercel. The EC2 Windows instance runs the game server. Pressing **Start Instance** starts EC2; Windows Task Scheduler then starts `StarRuptureServerEOS.exe` automatically.
+
+## Features
+
+- Password login using `DASHBOARD_PASSWORD` and an httpOnly session cookie.
+- EC2 instance controls: start, stop, restart/reboot.
+- Instance status: state, instance type, public IP, instance ID.
+- Game server status: online/offline health check after EC2 is running.
+- Server info: name, host, port, join address, password with show/hide, copy join address.
+- Realtime-style server logs by polling CloudWatch Logs every 5 seconds.
+- Instance usage monitor from CloudWatch metrics: CPU, network, disk IO, plus memory/disk free when CloudWatch Agent is installed.
+- Windows ops scripts for auto-start, save backup, and idle auto-shutdown.
+- No terminate-instance action.
+
+## Architecture
+
+```text
+Browser -> Vercel Next.js Dashboard -> AWS SDK server-side -> EC2 Windows
+                                                   |
+                                                   +-> CloudWatch Logs/Metrics
+                                                   +-> SSM SecureString server password
+
+EC2 Windows boot -> Task Scheduler -> start_server.bat -> StarRuptureServerEOS.exe
+EC2 Windows timer -> auto_shutdown.ps1 -> backup_save.ps1 -> S3 -> stop EC2 after 10 idle minutes
+```
+
+## Local Development
+
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+Open `http://localhost:3000` and sign in with `DASHBOARD_PASSWORD`.
+
+## Environment Variables
+
+Set these in `.env.local` for local development and in Vercel project settings for deployment:
+
+```bash
+AWS_REGION=ap-southeast-2
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+EC2_INSTANCE_ID=
+
+SERVER_NAME=StarRupture Dedicated Server
+SERVER_HOST=
+SERVER_PORT=7777
+SERVER_PASSWORD=
+SSM_SERVER_PASSWORD_PARAM=
+
+DASHBOARD_PASSWORD=
+
+CLOUDWATCH_LOG_GROUP=
+CLOUDWATCH_LOG_STREAM=
+CLOUDWATCH_AGENT_NAMESPACE=CWAgent
+
+BACKUP_S3_BUCKET=
+BACKUP_S3_PREFIX=starrupture-saves
+```
+
+Notes:
+
+- `SERVER_HOST` can be empty. The dashboard falls back to the EC2 public IP.
+- `SERVER_PASSWORD` can be empty if `SSM_SERVER_PASSWORD_PARAM` points to an SSM SecureString.
+- Memory and disk-free usage require the CloudWatch Agent on Windows. EC2 CPU/network/disk IO metrics work through standard CloudWatch.
+- `BACKUP_S3_BUCKET` and `BACKUP_S3_PREFIX` are primarily used by the Windows backup script, not by Vercel.
+
+## API Routes
+
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/status`
+- `GET /api/game-status`
+- `GET /api/metrics`
+- `GET /api/summary`
+- `POST /api/start`
+- `POST /api/stop`
+- `POST /api/restart`
+- `GET /api/server-info`
+- `GET /api/logs`
+
+## AWS IAM
+
+Create an IAM user or role for Vercel with the smallest useful scope. Restrict resources to the target instance, SSM parameter, and log stream where possible.
+
+Example dashboard policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:RebootInstances"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["cloudwatch:GetMetricData"],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter"],
+      "Resource": "arn:aws:ssm:ap-southeast-2:ACCOUNT_ID:parameter/YOUR_PARAMETER_NAME"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["logs:GetLogEvents"],
+      "Resource": "arn:aws:logs:ap-southeast-2:ACCOUNT_ID:log-group:YOUR_LOG_GROUP:log-stream:YOUR_LOG_STREAM"
+    }
+  ]
+}
+```
+
+Do not grant `ec2:TerminateInstances`; the dashboard does not implement termination.
+
+The EC2 Windows instance also needs an instance profile or AWS CLI credentials for:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:StopInstances"],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": "arn:aws:s3:::YOUR_BACKUP_BUCKET/starrupture-saves/*"
+    }
+  ]
+}
+```
+
+## Vercel Deploy
+
+1. Import this project in Vercel.
+2. Add all dashboard environment variables in Project Settings.
+3. Keep AWS keys server-side only. Do not expose them as `NEXT_PUBLIC_*`.
+4. Use a strong `DASHBOARD_PASSWORD`.
+5. Redeploy after changing environment variables.
+
+## EC2 Windows Setup
+
+Copy these files to the Windows instance:
+
+```text
+ops/windows/start_server.bat      -> C:\starruptureserver\start_server.bat
+ops/windows/auto_shutdown.ps1     -> C:\starruptureserver\auto_shutdown.ps1
+ops/windows/backup_save.ps1       -> C:\starruptureserver\backup_save.ps1
+```
+
+### Firewall
+
+Allow StarRupture traffic on port `7777`:
+
+```powershell
+New-NetFirewallRule -DisplayName "StarRupture UDP 7777" -Direction Inbound -Protocol UDP -LocalPort 7777 -Action Allow
+New-NetFirewallRule -DisplayName "StarRupture TCP 7777" -Direction Inbound -Protocol TCP -LocalPort 7777 -Action Allow
+```
+
+Also allow inbound UDP/TCP `7777` in the EC2 security group.
+
+### Auto-start Game Server
+
+Create a Task Scheduler task:
+
+- Trigger: At startup.
+- Action: Start a program.
+- Program: `C:\starruptureserver\start_server.bat`.
+- Run whether user is logged on or not.
+- Run with highest privileges.
+
+`start_server.bat` runs:
+
+```bat
+cd /d C:\starruptureserver
+StarRuptureServerEOS.exe -Log -port=7777
+```
+
+### Auto-shutdown After Idle
+
+Create a Task Scheduler task:
+
+- Trigger: Repeat every 1 minute indefinitely.
+- Action program: `powershell.exe`.
+- Arguments:
+
+```powershell
+-ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2
+```
+
+The script:
+
+- Reads the newest log file from `C:\starruptureserver\StarRupture\Saved\Logs`.
+- Tracks offset and player count in `C:\starruptureserver\auto_shutdown_state.json`.
+- Increments player count on `Join succeeded`.
+- Decrements player count on `UnregisterPlayers`, `ConnectionTimeout`, or `Removed address`.
+- After 10 minutes with `playerCount = 0`, runs `backup_save.ps1`, then:
+
+```powershell
+aws ec2 stop-instances --instance-ids $InstanceId --region ap-southeast-2
+```
+
+- Writes activity to `C:\starruptureserver\auto_shutdown.log`.
+
+### Save Backups
+
+Set these Windows environment variables or pass equivalent parameters:
+
+```powershell
+setx BACKUP_S3_BUCKET "your-backup-bucket"
+setx BACKUP_S3_PREFIX "starrupture-saves"
+setx STARRUPTURE_SAVE_PATH "C:\starruptureserver\StarRupture\Saved"
+setx AWS_REGION "ap-southeast-2"
+```
+
+`backup_save.ps1` compresses the save directory, uploads it to S3, writes `C:\starruptureserver\backup_save.log`, and keeps the 5 latest local zip files.
+
+## CloudWatch Logs
+
+Install and configure the Amazon CloudWatch Agent on Windows to ship:
+
+```text
+C:\starruptureserver\StarRupture\Saved\Logs\*.log
+```
+
+Set `CLOUDWATCH_LOG_GROUP` and `CLOUDWATCH_LOG_STREAM` in Vercel. If either value is missing, `GET /api/logs` returns an empty event list with a warning instead of failing the dashboard.
+
+## CloudWatch Agent Metrics
+
+Standard EC2 metrics provide CPU, network, and disk IO. For RAM and disk-free percentage, install CloudWatch Agent and publish:
+
+- `mem_used_percent`
+- `LogicalDisk % Free Space`
+
+Use `CLOUDWATCH_AGENT_NAMESPACE=CWAgent` unless you changed the namespace.
