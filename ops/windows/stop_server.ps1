@@ -69,14 +69,16 @@ try {
     if (-not $attached) {
         $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
         Write-StopLog "AttachConsole failed for PID $($process.Id). Win32 error: $errorCode. Falling back to taskkill without /F."
-        & taskkill.exe /PID $process.Id /T | Out-Null
+        & taskkill.exe /PID $process.Id | Out-Null
+        Write-StopLog "taskkill exit code: $LASTEXITCODE"
     } else {
         try {
             $sent = [ConsoleControl]::GenerateConsoleCtrlEvent([ConsoleControl]::CTRL_C_EVENT, 0)
             if (-not $sent) {
                 $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
                 Write-StopLog "GenerateConsoleCtrlEvent failed. Win32 error: $errorCode. Falling back to taskkill without /F."
-                & taskkill.exe /PID $process.Id /T | Out-Null
+                & taskkill.exe /PID $process.Id | Out-Null
+                Write-StopLog "taskkill exit code: $LASTEXITCODE"
             }
         } finally {
             Start-Sleep -Milliseconds 500
