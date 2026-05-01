@@ -39,6 +39,16 @@ function Get-ServerProcesses {
 }
 
 try {
+    Write-StopLog "Stop script started. ServerRoot=$ServerRoot PidPath=$pidPath StopRequestPath=$stopRequestPath TimeoutSeconds=$TimeoutSeconds NoForce=$NoForce."
+
+    $allServerProcesses = Get-ServerProcesses
+    if ($allServerProcesses.Count -gt 0) {
+        $processSummary = ($allServerProcesses | ForEach-Object { "$($_.ProcessName):$($_.Id)" }) -join ", "
+        Write-StopLog "Detected StarRupture process(es): $processSummary."
+    } else {
+        Write-StopLog "No StarRupture process found before stop request."
+    }
+
     $process = Get-ServerProcess
     if (-not $process) {
         Write-StopLog "Server process is not running."
@@ -49,10 +59,21 @@ try {
 
     Write-StopLog "Creating stop request for server PID $($process.Id)."
     Set-Content -Path $stopRequestPath -Value (Get-Date).ToUniversalTime().ToString("o") -Encoding ASCII
+    if (Test-Path $stopRequestPath) {
+        Write-StopLog "Stop request file created successfully."
+    } else {
+        Write-StopLog "Warning: stop request file was not found immediately after creation."
+    }
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $requestStillPresentLogged = $false
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 2
+        if (-not $requestStillPresentLogged -and (Test-Path $stopRequestPath) -and (Get-Date) -gt $deadline.AddSeconds(-1 * ($TimeoutSeconds - 10))) {
+            $requestStillPresentLogged = $true
+            Write-StopLog "Stop request still exists after 10 seconds. Supervisor may not be watching this path or may not be running."
+        }
+
         $remaining = Get-ServerProcesses
         if ($remaining.Count -eq 0) {
             Write-StopLog "All StarRupture server processes exited after supervisor stop request."
@@ -67,7 +88,8 @@ try {
     }
 
     $remaining = Get-ServerProcesses
-    Write-StopLog "Server did not exit within $TimeoutSeconds seconds. Forcing process stop for $($remaining.Count) process(es)."
+    $remainingSummary = ($remaining | ForEach-Object { "$($_.ProcessName):$($_.Id)" }) -join ", "
+    Write-StopLog "Server did not exit within $TimeoutSeconds seconds. Forcing process stop for $($remaining.Count) process(es): $remainingSummary."
     $remaining | Stop-Process -Force
     Remove-Item -Path $pidPath -Force -ErrorAction SilentlyContinue
     Remove-Item -Path $stopRequestPath -Force -ErrorAction SilentlyContinue
