@@ -1,6 +1,7 @@
 param(
     [string]$ServerRoot = "C:\starruptureserver",
     [string]$ExeName = "StarRuptureServerEOS.exe",
+    [string]$RuntimeExeName = "StarRuptureServerEOS-Win64-Shipping.exe",
     [int]$Port = 7777
 )
 
@@ -10,6 +11,8 @@ $pidPath = Join-Path $ServerRoot "starrupture_server.pid"
 $stopRequestPath = Join-Path $ServerRoot "starrupture_server.stop"
 $activityLogPath = Join-Path $ServerRoot "start_server.log"
 $exePath = Join-Path $ServerRoot $ExeName
+$runtimeExePath = Get-ChildItem -Path $ServerRoot -Recurse -Filter $RuntimeExeName -File -ErrorAction SilentlyContinue |
+    Select-Object -First 1 -ExpandProperty FullName
 
 function Write-StartLog {
     param([string]$Message)
@@ -92,11 +95,17 @@ public static class StarRuptureSupervisor {
 "@
 
 try {
+    if ($runtimeExePath) {
+        $exePath = $runtimeExePath
+        $ExeName = $RuntimeExeName
+        Write-StartLog "Found runtime server executable: $exePath"
+    }
+
     if (-not (Test-Path $exePath)) {
         throw "Server executable not found: $exePath"
     }
 
-    $existing = Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($ExeName)) -ErrorAction SilentlyContinue |
+    $existing = Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($ExeName)), ([System.IO.Path]::GetFileNameWithoutExtension($RuntimeExeName)) -ErrorAction SilentlyContinue |
         Select-Object -First 1
 
     if ($existing) {

@@ -1,6 +1,7 @@
 param(
     [string]$ServerRoot = "C:\starruptureserver",
     [string]$ExeName = "StarRuptureServerEOS.exe",
+    [string]$RuntimeExeName = "StarRuptureServerEOS-Win64-Shipping.exe",
     [int]$TimeoutSeconds = 120,
     [switch]$NoForce
 )
@@ -11,6 +12,7 @@ $pidPath = Join-Path $ServerRoot "starrupture_server.pid"
 $stopRequestPath = Join-Path $ServerRoot "starrupture_server.stop"
 $activityLogPath = Join-Path $ServerRoot "stop_server.log"
 $processName = [System.IO.Path]::GetFileNameWithoutExtension($ExeName)
+$runtimeProcessName = [System.IO.Path]::GetFileNameWithoutExtension($RuntimeExeName)
 
 function Write-StopLog {
     param([string]$Message)
@@ -23,13 +25,17 @@ function Get-ServerProcess {
         $rawPid = (Get-Content -Path $pidPath -Raw).Trim()
         if ($rawPid -match "^\d+$") {
             $byPid = Get-Process -Id ([int]$rawPid) -ErrorAction SilentlyContinue
-            if ($byPid -and $byPid.ProcessName -eq $processName) {
+            if ($byPid -and ($byPid.ProcessName -eq $processName -or $byPid.ProcessName -eq $runtimeProcessName)) {
                 return $byPid
             }
         }
     }
 
-    return Get-Process -Name $processName -ErrorAction SilentlyContinue | Select-Object -First 1
+    return Get-Process -Name $runtimeProcessName, $processName -ErrorAction SilentlyContinue | Select-Object -First 1
+}
+
+function Get-ServerProcesses {
+    return @(Get-Process -Name $runtimeProcessName, $processName -ErrorAction SilentlyContinue)
 }
 
 try {
@@ -47,9 +53,9 @@ try {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 2
-        $process.Refresh()
-        if ($process.HasExited) {
-            Write-StopLog "Server exited after supervisor stop request."
+        $remaining = Get-ServerProcesses
+        if ($remaining.Count -eq 0) {
+            Write-StopLog "All StarRupture server processes exited after supervisor stop request."
             Remove-Item -Path $pidPath -Force -ErrorAction SilentlyContinue
             Remove-Item -Path $stopRequestPath -Force -ErrorAction SilentlyContinue
             exit 0
@@ -60,8 +66,9 @@ try {
         throw "Server did not exit within $TimeoutSeconds seconds after supervisor stop request."
     }
 
-    Write-StopLog "Server did not exit within $TimeoutSeconds seconds. Forcing process stop."
-    Stop-Process -Id $process.Id -Force
+    $remaining = Get-ServerProcesses
+    Write-StopLog "Server did not exit within $TimeoutSeconds seconds. Forcing process stop for $($remaining.Count) process(es)."
+    $remaining | Stop-Process -Force
     Remove-Item -Path $pidPath -Force -ErrorAction SilentlyContinue
     Remove-Item -Path $stopRequestPath -Force -ErrorAction SilentlyContinue
 } catch {

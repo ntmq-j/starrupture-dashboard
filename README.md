@@ -212,7 +212,7 @@ Create a Task Scheduler task:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\starruptureserver\start_server.ps1 -ServerRoot C:\starruptureserver -Port 7777
 ```
 
-`start_server.ps1` starts a lightweight supervisor that allocates a console, launches `StarRuptureServerEOS.exe -Log -port=7777`, writes the game server PID to `C:\starruptureserver\starrupture_server.pid`, watches for `C:\starruptureserver\starrupture_server.stop`, and sends Ctrl+C to the game server from the same console when a stop request appears.
+`start_server.ps1` starts a lightweight supervisor that allocates a console, prefers the real runtime executable `StarRuptureServerEOS-Win64-Shipping.exe` when found, launches the server with `-Log -port=7777`, writes the game server PID to `C:\starruptureserver\starrupture_server.pid`, watches for `C:\starruptureserver\starrupture_server.stop`, and sends Ctrl+C to the game server from the same console when a stop request appears.
 
 ### Auto-shutdown After Idle
 
