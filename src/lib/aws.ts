@@ -14,7 +14,7 @@ import {
   type StandardUnit,
 } from "@aws-sdk/client-cloudwatch";
 import { CloudWatchLogsClient, GetLogEventsCommand } from "@aws-sdk/client-cloudwatch-logs";
-import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
+import { GetParameterCommand, SendCommandCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { Socket } from "net";
 
 function region() {
@@ -78,6 +78,41 @@ export async function startInstance() {
 
 export async function stopInstance() {
   await ec2Client().send(new StopInstancesCommand({ InstanceIds: [instanceId()] }));
+}
+
+export async function gracefulStopInstance() {
+  const status = await getInstanceStatus();
+  if (status.state !== "running") {
+    await stopInstance();
+    return { mode: "direct", reason: `Instance is ${status.state}.` };
+  }
+
+  const shutdownScriptPath = process.env.WINDOWS_SHUTDOWN_SCRIPT_PATH || "C:\\starruptureserver\\shutdown_now.ps1";
+  const command = [
+    `$script = "${escapePowerShellString(shutdownScriptPath)}"`,
+    "if (Test-Path $script) {",
+    "  powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script",
+    "} else {",
+    `  throw "Shutdown script not found: ${escapePowerShellString(shutdownScriptPath)}"`,
+    "}",
+  ].join("\n");
+
+  const response = await ssmClient().send(
+    new SendCommandCommand({
+      DocumentName: "AWS-RunPowerShellScript",
+      InstanceIds: [instanceId()],
+      Parameters: {
+        commands: [command],
+      },
+      TimeoutSeconds: 900,
+      Comment: "Gracefully stop StarRupture server, backup saves, then stop EC2.",
+    }),
+  );
+
+  return {
+    mode: "ssm",
+    commandId: response.Command?.CommandId ?? null,
+  };
 }
 
 export async function restartInstance() {
@@ -390,4 +425,8 @@ function canConnect(host: string, port: number, timeoutMs: number) {
     socket.once("error", () => finish(false));
     socket.connect(port, host);
   });
+}
+
+function escapePowerShellString(value: string) {
+  return value.replace(/`/g, "``").replace(/"/g, '`"');
 }

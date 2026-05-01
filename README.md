@@ -8,6 +8,7 @@ The dashboard is intended to run on Vercel. The EC2 Windows instance runs the ga
 
 - Password login using `DASHBOARD_PASSWORD` and an httpOnly session cookie.
 - EC2 instance controls: start, stop, restart/reboot.
+- Stop uses AWS Systems Manager Run Command to gracefully stop the game server, backup saves, then stop EC2.
 - Instance status: state, instance type, public IP, instance ID.
 - Game server status: online/offline health check after EC2 is running.
 - Server info: name, host, port, join address, password with show/hide, copy join address.
@@ -62,6 +63,7 @@ CLOUDWATCH_AGENT_NAMESPACE=CWAgent
 
 BACKUP_S3_BUCKET=
 BACKUP_S3_PREFIX=starrupture-saves
+WINDOWS_SHUTDOWN_SCRIPT_PATH=C:\starruptureserver\shutdown_now.ps1
 ```
 
 Notes:
@@ -107,6 +109,14 @@ Example dashboard policy:
     },
     {
       "Effect": "Allow",
+      "Action": ["ssm:SendCommand"],
+      "Resource": [
+        "arn:aws:ec2:ap-southeast-2:ACCOUNT_ID:instance/YOUR_INSTANCE_ID",
+        "arn:aws:ssm:ap-southeast-2::document/AWS-RunPowerShellScript"
+      ]
+    },
+    {
+      "Effect": "Allow",
       "Action": ["cloudwatch:GetMetricData"],
       "Resource": "*"
     },
@@ -146,6 +156,14 @@ The EC2 Windows instance also needs an instance profile or AWS CLI credentials f
 }
 ```
 
+For SSM Run Command, the EC2 instance role also needs the AWS managed policy:
+
+```text
+AmazonSSMManagedInstanceCore
+```
+
+Windows Server EC2 AMIs usually include the SSM Agent. Check Systems Manager -> Fleet Manager or Managed Nodes to confirm the instance appears online.
+
 ## Vercel Deploy
 
 1. Import this project in Vercel.
@@ -163,6 +181,7 @@ ops/windows/start_server.bat      -> C:\starruptureserver\start_server.bat
 ops/windows/start_server.ps1      -> C:\starruptureserver\start_server.ps1
 ops/windows/stop_server.ps1       -> C:\starruptureserver\stop_server.ps1
 ops/windows/auto_shutdown.ps1     -> C:\starruptureserver\auto_shutdown.ps1
+ops/windows/shutdown_now.ps1      -> C:\starruptureserver\shutdown_now.ps1
 ops/windows/backup_save.ps1       -> C:\starruptureserver\backup_save.ps1
 ```
 
@@ -222,6 +241,24 @@ aws ec2 stop-instances --instance-ids $InstanceId --region ap-southeast-2
 ```
 
 - Writes activity to `C:\starruptureserver\auto_shutdown.log`.
+
+### Manual Dashboard Stop
+
+The dashboard **Stop Instance** button sends an SSM Run Command to run:
+
+```text
+C:\starruptureserver\shutdown_now.ps1
+```
+
+That script:
+
+- Sends Ctrl+C to StarRupture through `stop_server.ps1`.
+- Waits up to 120 seconds for the server to save and exit.
+- Runs `backup_save.ps1`.
+- Stops the EC2 instance with `aws ec2 stop-instances`.
+- Writes `C:\starruptureserver\shutdown_now.log`.
+
+If the instance is already stopped, the API falls back to direct EC2 stop.
 
 You can manually test graceful server exit without stopping the instance:
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api";
 import { requireAuthResponse } from "@/lib/auth";
-import { stopInstance } from "@/lib/aws";
+import { gracefulStopInstance } from "@/lib/aws";
 
 export async function POST() {
   const unauthorized = await requireAuthResponse();
@@ -10,8 +10,8 @@ export async function POST() {
   }
 
   try {
-    await stopInstance();
-    return NextResponse.json({ ok: true });
+    const result = await gracefulStopInstance();
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return apiError(error);
   }
