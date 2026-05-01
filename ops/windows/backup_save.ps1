@@ -3,7 +3,8 @@ param(
     [string]$SavePath = $(if ($env:STARRUPTURE_SAVE_PATH) { $env:STARRUPTURE_SAVE_PATH } else { "C:\starruptureserver\StarRupture\Saved" }),
     [string]$BackupBucket = $env:BACKUP_S3_BUCKET,
     [string]$BackupPrefix = $(if ($env:BACKUP_S3_PREFIX) { $env:BACKUP_S3_PREFIX } else { "starrupture-saves" }),
-    [string]$Region = $(if ($env:AWS_REGION) { $env:AWS_REGION } else { "ap-southeast-2" })
+    [string]$Region = $(if ($env:AWS_REGION) { $env:AWS_REGION } else { "ap-southeast-2" }),
+    [string[]]$ExcludeDirectories = @("Logs")
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,17 +31,41 @@ try {
 
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $zipPath = Join-Path $backupWorkDir "starrupture-save-$timestamp.zip"
+    $stagePath = Join-Path $backupWorkDir "stage-$timestamp"
     $s3Key = "$BackupPrefix/starrupture-save-$timestamp.zip"
 
     if (Test-Path $zipPath) {
         Remove-Item -Path $zipPath -Force
     }
 
-    Compress-Archive -Path (Join-Path $SavePath "*") -DestinationPath $zipPath -Force
+    if (Test-Path $stagePath) {
+        Remove-Item -Path $stagePath -Recurse -Force
+    }
+
+    New-Item -ItemType Directory -Force -Path $stagePath | Out-Null
+
+    $robocopyArgs = @($SavePath, $stagePath, "/MIR", "/R:2", "/W:1", "/NFL", "/NDL", "/NP")
+    if ($ExcludeDirectories.Count -gt 0) {
+        $robocopyArgs += "/XD"
+        foreach ($directory in $ExcludeDirectories) {
+            $robocopyArgs += (Join-Path $SavePath $directory)
+        }
+    }
+
+    Write-BackupLog "Staging save files from $SavePath to $stagePath. Excluding: $($ExcludeDirectories -join ', ')"
+    & robocopy @robocopyArgs | Out-Null
+    $robocopyExitCode = $LASTEXITCODE
+    if ($robocopyExitCode -gt 7) {
+        throw "Robocopy failed with exit code $robocopyExitCode."
+    }
+
+    Compress-Archive -Path (Join-Path $stagePath "*") -DestinationPath $zipPath -Force
     Write-BackupLog "Created backup archive: $zipPath"
 
     aws s3 cp $zipPath "s3://$BackupBucket/$s3Key" --region $Region | Out-Null
     Write-BackupLog "Uploaded backup to s3://$BackupBucket/$s3Key"
+
+    Remove-Item -Path $stagePath -Recurse -Force -ErrorAction SilentlyContinue
 
     Get-ChildItem -Path $backupWorkDir -Filter "starrupture-save-*.zip" |
         Sort-Object LastWriteTimeUtc -Descending |

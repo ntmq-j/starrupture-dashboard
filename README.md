@@ -249,6 +249,12 @@ setx AWS_REGION "ap-southeast-2"
 
 `backup_save.ps1` compresses the save directory, uploads it to S3, writes `C:\starruptureserver\backup_save.log`, and keeps the 5 latest local zip files.
 
+By default, `backup_save.ps1` excludes the `Logs` directory because the active StarRupture log file is often locked while the server is running. To exclude more directories:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File C:\starruptureserver\backup_save.ps1 -ExcludeDirectories Logs,Crashes
+```
+
 ## CloudWatch Logs
 
 Install and configure the Amazon CloudWatch Agent on Windows to ship:
