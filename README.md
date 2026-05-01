@@ -235,9 +235,10 @@ The script:
 - Decrements the player count estimate on `UnregisterPlayers` or `ConnectionTimeout`.
 - Treats `ControlChannelClose` and `Removed address` as connection activity only, because StarRupture can log those alongside `UnregisterPlayers` for the same player.
 - Starts the idle timer only when the count estimate is 0.
-- After 10 idle minutes, requires a recent save marker before shutting down. By default the marker must be within 20 minutes.
+- After 10 idle minutes, requires a recent save marker before shutting down if player activity was observed in the tracked log. By default the marker must be within 20 minutes.
 - Save markers are `UCrMassSaveSubsystem, Saved ... loaded items` or `bSuccess: true` in the StarRupture log.
 - If no recent save marker is found, the script writes a warning and waits for the next Task Scheduler run instead of stopping EC2.
+- If the server only emits background EOS heartbeat logs and no player activity has been observed, the script does not require a save marker because there is no gameplay progress to protect.
 - Once a recent save is confirmed, `stop_server.ps1` asks Windows to stop `StarRuptureServerEOS-Win64-Shipping.exe` using `taskkill` without `/F`, waits for exit, and only force-stops if the timeout expires.
 - Then `auto_shutdown.ps1` runs `backup_save.ps1`, then:
 

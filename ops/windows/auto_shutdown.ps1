@@ -35,6 +35,7 @@ function New-State {
         lastPlayerLeaveUtc = $null
         lastSaveUtc = $null
         lastSaveLine = ""
+        observedPlayerActivity = $false
         stopped = $false
     }
 }
@@ -75,6 +76,7 @@ function Normalize-State {
     Ensure-StateProperty -State $State -Name "lastPlayerLeaveUtc" -Value $null
     Ensure-StateProperty -State $State -Name "lastSaveUtc" -Value $null
     Ensure-StateProperty -State $State -Name "lastSaveLine" -Value ""
+    Ensure-StateProperty -State $State -Name "observedPlayerActivity" -Value $false
     Ensure-StateProperty -State $State -Name "stopped" -Value $false
 
     return $State
@@ -143,6 +145,7 @@ try {
         $state.stopped = $false
         $state.lastSaveUtc = $null
         $state.lastSaveLine = ""
+        $state.observedPlayerActivity = $false
         Write-AutoShutdownLog "Tracking latest log: $($latestLog.FullName)"
     }
 
@@ -173,11 +176,13 @@ try {
                 $state.idleSinceUtc = $null
                 $state.idleCandidateSinceUtc = $null
                 $state.lastPlayerJoinUtc = (Get-Date).ToUniversalTime().ToString("o")
+                $state.observedPlayerActivity = $true
                 $state.stopped = $false
                 Write-AutoShutdownLog "Player joined. Count: $($state.playerCount)"
             } elseif ($line -match "UnregisterPlayers|ConnectionTimeout") {
                 $state.playerCount = [Math]::Max(0, [int]$state.playerCount - 1)
                 $state.lastPlayerLeaveUtc = (Get-Date).ToUniversalTime().ToString("o")
+                $state.observedPlayerActivity = $true
                 if (-not $state.idleCandidateSinceUtc) {
                     $state.idleCandidateSinceUtc = $state.lastPlayerLeaveUtc
                 }
@@ -187,7 +192,7 @@ try {
             }
         }
     } else {
-        Write-AutoShutdownLog "No new log entries. Current count estimate: $($state.playerCount). IdleSinceUtc=$($state.idleSinceUtc). LastSaveUtc=$($state.lastSaveUtc)."
+        Write-AutoShutdownLog "No new log entries. Current count estimate: $($state.playerCount). IdleSinceUtc=$($state.idleSinceUtc). LastSaveUtc=$($state.lastSaveUtc). ObservedPlayerActivity=$($state.observedPlayerActivity)."
     }
 
     if ([int]$state.playerCount -eq 0) {
@@ -200,7 +205,7 @@ try {
         $idleFor = (Get-Date).ToUniversalTime() - $idleSince
 
         if ($idleFor.TotalMinutes -ge $IdleMinutes -and -not $state.stopped) {
-            if (-not $SkipRecentSaveCheck) {
+            if (-not $SkipRecentSaveCheck -and $state.observedPlayerActivity) {
                 $saveStatus = Get-RecentSaveStatus -State $state -FreshnessMinutes $SaveFreshnessMinutes
                 if (-not $saveStatus.IsFresh) {
                     Write-AutoShutdownLog "Idle threshold reached, but shutdown is waiting for a recent save marker. $($saveStatus.Message)"
@@ -209,6 +214,8 @@ try {
                 }
 
                 Write-AutoShutdownLog "Recent save marker confirmed before shutdown. $($saveStatus.Message)"
+            } elseif (-not $SkipRecentSaveCheck) {
+                Write-AutoShutdownLog "No player activity observed in the tracked log; recent save marker is not required before idle shutdown."
             }
 
             Write-AutoShutdownLog "Idle for $([Math]::Round($idleFor.TotalMinutes, 1)) minutes. Stopping EC2 instance $InstanceId in $Region."
