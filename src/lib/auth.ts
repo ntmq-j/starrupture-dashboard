@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 
 export const SESSION_COOKIE = "starrupture_session";
 
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 export function requireDashboardPassword() {
   const password = process.env.DASHBOARD_PASSWORD;
@@ -27,6 +27,8 @@ export function verifyPassword(candidate: string) {
 }
 
 export function createSessionCookie(response: NextResponse) {
+  const expires = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
+
   response.cookies.set({
     name: SESSION_COOKIE,
     value: sessionToken(requireDashboardPassword()),
@@ -35,6 +37,7 @@ export function createSessionCookie(response: NextResponse) {
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
+    expires,
   });
 }
 
@@ -47,6 +50,7 @@ export function clearSessionCookie(response: NextResponse) {
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: 0,
+    expires: new Date(0),
   });
 }
 
