@@ -117,6 +117,8 @@ try {
         throw "InstanceId is required. Pass -InstanceId or set EC2_INSTANCE_ID."
     }
 
+    Write-AutoShutdownLog "Auto-shutdown check started. InstanceId=$InstanceId Region=$Region IdleMinutes=$IdleMinutes SaveFreshnessMinutes=$SaveFreshnessMinutes."
+
     if (-not (Test-Path $logDirectory)) {
         Write-AutoShutdownLog "Log directory not found: $logDirectory"
         exit 0
@@ -184,6 +186,8 @@ try {
                 Write-AutoShutdownLog "Connection close activity observed without changing count estimate."
             }
         }
+    } else {
+        Write-AutoShutdownLog "No new log entries. Current count estimate: $($state.playerCount). IdleSinceUtc=$($state.idleSinceUtc). LastSaveUtc=$($state.lastSaveUtc)."
     }
 
     if ([int]$state.playerCount -eq 0) {
