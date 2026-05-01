@@ -105,13 +105,15 @@ try {
                 $state.lastPlayerJoinUtc = (Get-Date).ToUniversalTime().ToString("o")
                 $state.stopped = $false
                 Write-AutoShutdownLog "Player joined. Count: $($state.playerCount)"
-            } elseif ($line -match "UnregisterPlayers|ConnectionTimeout|ControlChannelClose|Removed address") {
+            } elseif ($line -match "UnregisterPlayers|ConnectionTimeout") {
                 $state.playerCount = [Math]::Max(0, [int]$state.playerCount - 1)
                 $state.lastPlayerLeaveUtc = (Get-Date).ToUniversalTime().ToString("o")
                 if (-not $state.idleCandidateSinceUtc) {
                     $state.idleCandidateSinceUtc = $state.lastPlayerLeaveUtc
                 }
                 Write-AutoShutdownLog "Player left, timed out, or closed connection. Count estimate: $($state.playerCount)"
+            } elseif ($line -match "ControlChannelClose|Removed address") {
+                Write-AutoShutdownLog "Connection close activity observed without changing count estimate."
             }
         }
     }
