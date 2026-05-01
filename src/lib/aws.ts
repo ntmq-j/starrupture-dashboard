@@ -162,6 +162,13 @@ export async function getInstanceMetrics() {
       dimensions.some((dimension) => dimension.Name === "instance" && dimension.Value === "C:"),
     ),
   ]);
+  const memoryQueryDimensions = memoryDimensions ?? [{ Name: "InstanceId", Value: instanceId() }];
+  const diskQueryDimensions =
+    diskDimensions ?? [
+      { Name: "objectname", Value: "LogicalDisk" },
+      { Name: "InstanceId", Value: instanceId() },
+      { Name: "instance", Value: "C:" },
+    ];
 
   const metricDataQueries: MetricDataQuery[] = [
     metricQuery("cpu", "AWS/EC2", "CPUUtilization", "Percent", "Average"),
@@ -171,17 +178,10 @@ export async function getInstanceMetrics() {
     metricQuery("diskWriteBytes", "AWS/EC2", "DiskWriteBytes", "Bytes", "Sum"),
   ];
 
-  if (memoryDimensions) {
-    metricDataQueries.push(
-      metricQuery("memory", customNamespace, "mem_used_percent", "Percent", "Average", memoryDimensions),
-    );
-  }
-
-  if (diskDimensions) {
-    metricDataQueries.push(
-      metricQuery("disk", customNamespace, "LogicalDisk % Free Space", "Percent", "Average", diskDimensions),
-    );
-  }
+  metricDataQueries.push(
+    metricQuery("memory", customNamespace, "mem_used_percent", "Percent", "Average", memoryQueryDimensions),
+    metricQuery("disk", customNamespace, "LogicalDisk % Free Space", "Percent", "Average", diskQueryDimensions),
+  );
 
   const response = await cloudWatchClient().send(
     new GetMetricDataCommand({
@@ -297,21 +297,25 @@ async function findMetricDimensions(
   metricName: string,
   predicate: (dimensions: Dimension[]) => boolean = () => true,
 ) {
-  const response = await cloudWatchClient().send(
-    new ListMetricsCommand({
-      Namespace: namespace,
-      MetricName: metricName,
-      Dimensions: [{ Name: "InstanceId", Value: instanceId() }],
-    }),
-  );
+  try {
+    const response = await cloudWatchClient().send(
+      new ListMetricsCommand({
+        Namespace: namespace,
+        MetricName: metricName,
+        Dimensions: [{ Name: "InstanceId", Value: instanceId() }],
+      }),
+    );
 
-  const metric = response.Metrics?.find((candidate) => {
-    const dimensions = candidate.Dimensions ?? [];
-    return dimensions.some((dimension) => dimension.Name === "InstanceId" && dimension.Value === instanceId())
-      && predicate(dimensions);
-  });
+    const metric = response.Metrics?.find((candidate) => {
+      const dimensions = candidate.Dimensions ?? [];
+      return dimensions.some((dimension) => dimension.Name === "InstanceId" && dimension.Value === instanceId())
+        && predicate(dimensions);
+    });
 
-  return normalizeDimensions(metric?.Dimensions);
+    return normalizeDimensions(metric?.Dimensions);
+  } catch {
+    return null;
+  }
 }
 
 function normalizeDimensions(dimensions?: Dimension[]) {
