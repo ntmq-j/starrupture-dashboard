@@ -210,10 +210,11 @@ Create a Task Scheduler task:
 
 ```bat
 cd /d C:\starruptureserver
+del /f /q C:\starruptureserver\auto_shutdown_state.json 2>nul
 start "" ".\StarRuptureServerEOS.exe" -Log -port=7777
 ```
 
-This intentionally matches the launcher style shipped with the dedicated server. `start_server.ps1` remains available as a PowerShell equivalent, but Task Scheduler can use `start_server.bat` directly. Stop handling does not depend on a supervisor; `stop_server.ps1` detects the running StarRupture process by name.
+This intentionally matches the launcher style shipped with the dedicated server, with one extra reset of `auto_shutdown_state.json` so player count and idle cycle state start fresh on each boot. `start_server.ps1` remains available as a PowerShell equivalent, but Task Scheduler can use `start_server.bat` directly. Stop handling does not depend on a supervisor; `stop_server.ps1` detects the running StarRupture process by name.
 
 ### Auto-shutdown After Idle
 

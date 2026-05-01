@@ -196,11 +196,11 @@ try {
                 Write-AutoShutdownLog "Connection close activity observed without changing count estimate."
             } elseif ($line -match "ScheduleNextSDKConfigDataUpdate" -and [int]$state.playerCount -eq 0) {
                 $state.eosUpdateCyclesSinceIdle = [int]$state.eosUpdateCyclesSinceIdle + 1
-                Write-AutoShutdownLog "Idle EOS update cycle observed. Count: $($state.eosUpdateCyclesSinceIdle)/$IdleEosUpdateCycles."
+                Write-AutoShutdownLog "Idle EOS update cycle observed. Count: $($state.eosUpdateCyclesSinceIdle)/$IdleEosUpdateCycles. Stopped=$($state.stopped)."
             }
         }
     } else {
-        Write-AutoShutdownLog "No new log entries. Current count estimate: $($state.playerCount). IdleSinceUtc=$($state.idleSinceUtc). IdleEosUpdateCycles=$($state.eosUpdateCyclesSinceIdle)/$IdleEosUpdateCycles. LastSaveUtc=$($state.lastSaveUtc). ObservedPlayerActivity=$($state.observedPlayerActivity)."
+        Write-AutoShutdownLog "No new log entries. Current count estimate: $($state.playerCount). IdleSinceUtc=$($state.idleSinceUtc). IdleEosUpdateCycles=$($state.eosUpdateCyclesSinceIdle)/$IdleEosUpdateCycles. LastSaveUtc=$($state.lastSaveUtc). ObservedPlayerActivity=$($state.observedPlayerActivity). Stopped=$($state.stopped)."
     }
 
     if ([int]$state.playerCount -eq 0) {
@@ -249,6 +249,8 @@ try {
             }
             aws ec2 stop-instances --instance-ids $InstanceId --region $Region | Out-Null
             $state.stopped = $true
+        } elseif (($hasEnoughIdleTime -or $hasEnoughIdleEosCycles) -and $state.stopped) {
+            Write-AutoShutdownLog "Idle shutdown condition is met, but state is already marked stopped. Delete $statePath if this is a new boot/session."
         }
     } else {
         $state.idleSinceUtc = $null

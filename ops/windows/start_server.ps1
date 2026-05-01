@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $activityLogPath = Join-Path $ServerRoot "start_server.log"
+$autoShutdownStatePath = Join-Path $ServerRoot "auto_shutdown_state.json"
 $exePath = Join-Path $ServerRoot $ExeName
 $processName = [System.IO.Path]::GetFileNameWithoutExtension($ExeName)
 $runtimeProcessName = [System.IO.Path]::GetFileNameWithoutExtension($RuntimeExeName)
@@ -32,6 +33,8 @@ try {
     }
 
     Set-Location $ServerRoot
+    Remove-Item -Path $autoShutdownStatePath -Force -ErrorAction SilentlyContinue
+    Write-StartLog "Reset auto-shutdown state."
     Write-StartLog "Starting $ExeName with -Log -port=$Port."
     $process = Start-Process -FilePath $exePath -ArgumentList @("-Log", "-port=$Port") -WorkingDirectory $ServerRoot -PassThru
     Write-StartLog "Launcher process started with PID $($process.Id). Runtime process may be spawned separately."
