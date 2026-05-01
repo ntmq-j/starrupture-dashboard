@@ -28,6 +28,9 @@ function New-State {
         offset = 0
         playerCount = 0
         idleSinceUtc = $null
+        idleCandidateSinceUtc = $null
+        lastPlayerJoinUtc = $null
+        lastPlayerLeaveUtc = $null
         stopped = $false
     }
 }
@@ -72,7 +75,9 @@ try {
     if ($state.logPath -ne $latestLog.FullName) {
         $state.logPath = $latestLog.FullName
         $state.offset = 0
-        $state.playerCount = [Math]::Max(0, [int]$state.playerCount)
+        $state.playerCount = 0
+        $state.idleSinceUtc = $null
+        $state.idleCandidateSinceUtc = $null
         $state.stopped = $false
         Write-AutoShutdownLog "Tracking latest log: $($latestLog.FullName)"
     }
@@ -93,21 +98,28 @@ try {
 
     if ($newText) {
         foreach ($line in ($newText -split "`r?`n")) {
-            if ($line -match "Join succeeded") {
+            if ($line -match "Join succeeded|Login request|NotifyAcceptingConnection|AddClientConnection") {
                 $state.playerCount = [int]$state.playerCount + 1
                 $state.idleSinceUtc = $null
+                $state.idleCandidateSinceUtc = $null
+                $state.lastPlayerJoinUtc = (Get-Date).ToUniversalTime().ToString("o")
                 $state.stopped = $false
                 Write-AutoShutdownLog "Player joined. Count: $($state.playerCount)"
-            } elseif ($line -match "UnregisterPlayers|ConnectionTimeout|Removed address") {
+            } elseif ($line -match "UnregisterPlayers|ConnectionTimeout|ControlChannelClose|Removed address") {
                 $state.playerCount = [Math]::Max(0, [int]$state.playerCount - 1)
-                Write-AutoShutdownLog "Player left or timed out. Count: $($state.playerCount)"
+                $state.lastPlayerLeaveUtc = (Get-Date).ToUniversalTime().ToString("o")
+                if (-not $state.idleCandidateSinceUtc) {
+                    $state.idleCandidateSinceUtc = $state.lastPlayerLeaveUtc
+                }
+                Write-AutoShutdownLog "Player left, timed out, or closed connection. Count estimate: $($state.playerCount)"
             }
         }
     }
 
-    if ([int]$state.playerCount -eq 0) {
+    $hasIdleCandidate = [bool]$state.idleCandidateSinceUtc
+    if ([int]$state.playerCount -eq 0 -or $hasIdleCandidate) {
         if (-not $state.idleSinceUtc) {
-            $state.idleSinceUtc = (Get-Date).ToUniversalTime().ToString("o")
+            $state.idleSinceUtc = $(if ($state.idleCandidateSinceUtc) { $state.idleCandidateSinceUtc } else { (Get-Date).ToUniversalTime().ToString("o") })
             Write-AutoShutdownLog "Server became idle."
         }
 

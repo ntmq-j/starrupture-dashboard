@@ -230,9 +230,10 @@ The script:
 
 - Reads the newest log file from `C:\starruptureserver\StarRupture\Saved\Logs`.
 - Tracks offset and player count in `C:\starruptureserver\auto_shutdown_state.json`.
-- Increments player count on `Join succeeded`.
-- Decrements player count on `UnregisterPlayers`, `ConnectionTimeout`, or `Removed address`.
-- After 10 minutes with `playerCount = 0`, sends Ctrl+C to the game server with `stop_server.ps1`.
+- Increments player count estimate on `Join succeeded`, `Login request`, `NotifyAcceptingConnection`, or `AddClientConnection`.
+- Treats `UnregisterPlayers`, `ConnectionTimeout`, `ControlChannelClose`, or `Removed address` as player leave/idle signals.
+- Starts the idle timer when the count estimate is 0 or a final-player leave signal is seen.
+- After 10 idle minutes, sends Ctrl+C to the game server with `stop_server.ps1`.
 - `stop_server.ps1` waits up to 120 seconds for StarRupture to save and exit gracefully.
 - Then `auto_shutdown.ps1` runs `backup_save.ps1`, then:
 
