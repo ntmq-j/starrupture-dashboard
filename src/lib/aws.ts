@@ -14,7 +14,7 @@ import {
   type StandardUnit,
 } from "@aws-sdk/client-cloudwatch";
 import { CloudWatchLogsClient, GetLogEventsCommand } from "@aws-sdk/client-cloudwatch-logs";
-import { GetParameterCommand, SendCommandCommand, SSMClient } from "@aws-sdk/client-ssm";
+import { GetCommandInvocationCommand, GetParameterCommand, SendCommandCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { Socket } from "net";
 
 function region() {
@@ -113,6 +113,61 @@ export async function gracefulStopInstance() {
     mode: "ssm",
     commandId: response.Command?.CommandId ?? null,
   };
+}
+
+export async function getSaveSessions() {
+  const status = await getInstanceStatus();
+  if (status.state !== "running") {
+    return {
+      sessions: [],
+      warning: `Instance is ${status.state}. Start the instance to read local save sessions.`,
+    };
+  }
+
+  const restoreScriptPath = process.env.WINDOWS_RESTORE_SCRIPT_PATH || "C:\\starruptureserver\\restore_save.ps1";
+  const output = await runWindowsPowerShell(
+    [
+      `$script = "${escapePowerShellString(restoreScriptPath)}"`,
+      "if (-not (Test-Path $script)) {",
+      `  throw "Restore script not found: ${escapePowerShellString(restoreScriptPath)}"`,
+      "}",
+      "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Mode List",
+    ],
+    "List StarRupture save sessions.",
+    120,
+  );
+  const parsed = parseJsonCommandOutput<{ sessions?: SaveSession[] }>(output.stdout);
+
+  return {
+    sessions: parsed.sessions ?? [],
+    warning: null,
+  };
+}
+
+export async function restoreSaveSession(fileName: string) {
+  if (!/^starrupture-save-\d{8}-\d{6}\.zip$/.test(fileName)) {
+    throw new Error("Invalid save session file name.");
+  }
+
+  const status = await getInstanceStatus();
+  if (status.state !== "running") {
+    throw new Error(`Instance is ${status.state}. Start the instance before restoring a save session.`);
+  }
+
+  const restoreScriptPath = process.env.WINDOWS_RESTORE_SCRIPT_PATH || "C:\\starruptureserver\\restore_save.ps1";
+  const output = await runWindowsPowerShell(
+    [
+      `$script = "${escapePowerShellString(restoreScriptPath)}"`,
+      "if (-not (Test-Path $script)) {",
+      `  throw "Restore script not found: ${escapePowerShellString(restoreScriptPath)}"`,
+      "}",
+      `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Mode Restore -FileName "${escapePowerShellString(fileName)}"`,
+    ],
+    `Restore StarRupture save session ${fileName}.`,
+    900,
+  );
+
+  return parseJsonCommandOutput<{ ok: boolean; restoredFileName: string; restoredAtUtc: string }>(output.stdout);
 }
 
 export async function restartInstance() {
@@ -429,4 +484,71 @@ function canConnect(host: string, port: number, timeoutMs: number) {
 
 function escapePowerShellString(value: string) {
   return value.replace(/`/g, "``").replace(/"/g, '`"');
+}
+
+type SaveSession = {
+  fileName: string;
+  createdAtUtc: string;
+  sizeBytes: number;
+};
+
+async function runWindowsPowerShell(commands: string[], comment: string, timeoutSeconds: number) {
+  const response = await ssmClient().send(
+    new SendCommandCommand({
+      DocumentName: "AWS-RunPowerShellScript",
+      InstanceIds: [instanceId()],
+      Parameters: {
+        commands: [commands.join("\n")],
+      },
+      TimeoutSeconds: timeoutSeconds,
+      Comment: comment,
+    }),
+  );
+  const commandId = response.Command?.CommandId;
+  if (!commandId) {
+    throw new Error("SSM did not return a command id.");
+  }
+
+  const startedAt = Date.now();
+  const pollTimeoutMs = timeoutSeconds * 1000;
+  while (Date.now() - startedAt < pollTimeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      const invocation = await ssmClient().send(
+        new GetCommandInvocationCommand({
+          CommandId: commandId,
+          InstanceId: instanceId(),
+        }),
+      );
+
+      if (["Success", "Cancelled", "TimedOut", "Failed", "Cancelling"].includes(invocation.Status ?? "")) {
+        const stdout = invocation.StandardOutputContent ?? "";
+        const stderr = invocation.StandardErrorContent ?? "";
+
+        if (invocation.Status !== "Success") {
+          throw new Error(stderr || stdout || `SSM command ${commandId} finished with status ${invocation.Status}.`);
+        }
+
+        return { commandId, stdout, stderr };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!message.includes("InvocationDoesNotExist")) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(`Timed out waiting for SSM command ${commandId}.`);
+}
+
+function parseJsonCommandOutput<T>(output: string): T {
+  const trimmed = output.trim();
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+    throw new Error("SSM command did not return JSON output.");
+  }
+
+  return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1)) as T;
 }

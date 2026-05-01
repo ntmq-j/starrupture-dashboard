@@ -1,10 +1,10 @@
 param(
     [string]$ServerRoot = "C:\starruptureserver",
-    [string]$SavePath = $(if ($env:STARRUPTURE_SAVE_PATH) { $env:STARRUPTURE_SAVE_PATH } else { "C:\starruptureserver\StarRupture\Saved" }),
+    [string]$SavePath = "C:\starruptureserver\StarRupture\Saved\SaveGames",
     [string]$BackupBucket = $env:BACKUP_S3_BUCKET,
     [string]$BackupPrefix = $(if ($env:BACKUP_S3_PREFIX) { $env:BACKUP_S3_PREFIX } else { "starrupture-saves" }),
     [string]$Region = $(if ($env:AWS_REGION) { $env:AWS_REGION } else { "ap-southeast-2" }),
-    [string[]]$ExcludeDirectories = @("Logs")
+    [string[]]$ExcludeDirectories = @()
 )
 
 $ErrorActionPreference = "Stop"

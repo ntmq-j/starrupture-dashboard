@@ -64,6 +64,7 @@ CLOUDWATCH_AGENT_NAMESPACE=CWAgent
 BACKUP_S3_BUCKET=
 BACKUP_S3_PREFIX=starrupture-saves
 WINDOWS_SHUTDOWN_SCRIPT_PATH=C:\starruptureserver\shutdown_now.ps1
+WINDOWS_RESTORE_SCRIPT_PATH=C:\starruptureserver\restore_save.ps1
 ```
 
 Notes:
@@ -86,6 +87,8 @@ Notes:
 - `POST /api/restart`
 - `GET /api/server-info`
 - `GET /api/logs`
+- `GET /api/save-sessions`
+- `POST /api/restore-save`
 
 ## AWS IAM
 
@@ -114,6 +117,11 @@ Example dashboard policy:
         "arn:aws:ec2:ap-southeast-2:ACCOUNT_ID:instance/YOUR_INSTANCE_ID",
         "arn:aws:ssm:ap-southeast-2::document/AWS-RunPowerShellScript"
       ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ssm:GetCommandInvocation"],
+      "Resource": "*"
     },
     {
       "Effect": "Allow",
@@ -183,6 +191,7 @@ ops/windows/stop_server.ps1       -> C:\starruptureserver\stop_server.ps1
 ops/windows/auto_shutdown.ps1     -> C:\starruptureserver\auto_shutdown.ps1
 ops/windows/shutdown_now.ps1      -> C:\starruptureserver\shutdown_now.ps1
 ops/windows/backup_save.ps1       -> C:\starruptureserver\backup_save.ps1
+ops/windows/restore_save.ps1      -> C:\starruptureserver\restore_save.ps1
 ```
 
 ### Firewall
@@ -298,9 +307,11 @@ setx STARRUPTURE_SAVE_PATH "C:\starruptureserver\StarRupture\Saved"
 setx AWS_REGION "ap-southeast-2"
 ```
 
-`backup_save.ps1` compresses the save directory, uploads it to S3, writes `C:\starruptureserver\backup_save.log`, and keeps the 5 latest local zip files.
+`backup_save.ps1` compresses `C:\starruptureserver\StarRupture\Saved\SaveGames`, uploads it to S3, writes `C:\starruptureserver\backup_save.log`, and keeps the 5 latest local zip files in `C:\starruptureserver\backups`.
 
-By default, `backup_save.ps1` excludes the `Logs` directory because the active StarRupture log file is often locked while the server is running. To exclude more directories:
+The dashboard save session panel reads those 5 local zip files through SSM. Restoring a session runs `restore_save.ps1`, which stops the game server, backs up the current save, replaces `SaveGames` with the selected zip contents, and starts the game server again.
+
+To exclude directories inside the save path:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File C:\starruptureserver\backup_save.ps1 -ExcludeDirectories Logs,Crashes

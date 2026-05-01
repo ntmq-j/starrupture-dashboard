@@ -68,12 +68,25 @@ type Summary = {
   refreshedAt: string;
 };
 
+type SaveSession = {
+  fileName: string;
+  createdAtUtc: string;
+  sizeBytes: number;
+};
+
+type SaveSessionsPayload = {
+  sessions: SaveSession[];
+  warning: string | null;
+};
+
 export default function Dashboard() {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [saveSessions, setSaveSessions] = useState<SaveSessionsPayload>({ sessions: [], warning: null });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [action, setAction] = useState<string | null>(null);
+  const [restoreAction, setRestoreAction] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
 
   const loadData = useCallback(async (quiet = false) => {
@@ -97,11 +110,33 @@ export default function Dashboard() {
     }
   }, []);
 
+  const loadSaveSessions = useCallback(async () => {
+    try {
+      const response = await fetch("/api/save-sessions", { cache: "no-store" });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Unable to load save sessions.");
+      }
+
+      setSaveSessions((await response.json()) as SaveSessionsPayload);
+    } catch (loadError) {
+      setSaveSessions({
+        sessions: [],
+        warning: loadError instanceof Error ? loadError.message : "Unable to load save sessions.",
+      });
+    }
+  }, []);
+
   useEffect(() => {
     void loadData();
+    void loadSaveSessions();
     const interval = window.setInterval(() => void loadData(true), 5000);
-    return () => window.clearInterval(interval);
-  }, [loadData]);
+    const saveInterval = window.setInterval(() => void loadSaveSessions(), 30000);
+    return () => {
+      window.clearInterval(interval);
+      window.clearInterval(saveInterval);
+    };
+  }, [loadData, loadSaveSessions]);
 
   const instanceTone = useMemo(() => toneForState(summary?.instance.state), [summary?.instance.state]);
   const gameTone = useMemo(() => toneForState(summary?.gameServer.status), [summary?.gameServer.status]);
@@ -120,10 +155,46 @@ export default function Dashboard() {
 
       setNotice(`${labelForAction(endpoint)} instance command sent.`);
       await loadData();
+      await loadSaveSessions();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : `Unable to ${endpoint} instance.`);
     } finally {
       setAction(null);
+    }
+  }
+
+  async function restoreSave(fileName: string) {
+    const session = saveSessions.sessions.find((candidate) => candidate.fileName === fileName);
+    const label = session ? formatDate(session.createdAtUtc) : fileName;
+    const confirmed = window.confirm(
+      `Restore save session ${label}? This will stop the game server, replace SaveGames, and start the server again.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setRestoreAction(fileName);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/restore-save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Unable to restore save session.");
+      }
+
+      setNotice("Save session restore command completed. Game server restart requested.");
+      await loadData();
+      await loadSaveSessions();
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : "Unable to restore save session.");
+    } finally {
+      setRestoreAction(null);
     }
   }
 
@@ -287,6 +358,50 @@ export default function Dashboard() {
               {summary.metrics.warning}
             </p>
           ) : null}
+        </section>
+
+        <section className="rounded-lg border border-line bg-panel/90 p-5 shadow-glow">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <HardDrive className="text-cyan" size={20} />
+              <h2 className="text-lg font-semibold text-white">Save sessions</h2>
+            </div>
+            <button className="icon-button" onClick={() => void loadSaveSessions()} title="Refresh save sessions" type="button">
+              <RefreshCcw size={18} />
+            </button>
+          </div>
+
+          {saveSessions.warning ? (
+            <p className="mb-4 rounded-md border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+              {saveSessions.warning}
+            </p>
+          ) : null}
+
+          <div className="grid gap-3 lg:grid-cols-5">
+            {saveSessions.sessions.length ? (
+              saveSessions.sessions.map((session) => (
+                <div className="rounded-md border border-line bg-slate-950/70 p-4" key={session.fileName}>
+                  <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Session time</p>
+                  <p className="mt-2 text-base font-semibold text-white">{formatDate(session.createdAtUtc)}</p>
+                  <p className="mt-1 break-all text-xs text-slate-500">{session.fileName}</p>
+                  <p className="mt-2 text-sm text-slate-400">{formatBytes(session.sizeBytes)}</p>
+                  <button
+                    className="mt-4 flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-line bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:border-cyan hover:text-cyan disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={Boolean(restoreAction || action)}
+                    onClick={() => void restoreSave(session.fileName)}
+                    type="button"
+                  >
+                    {restoreAction === session.fileName ? <RefreshCcw className="animate-spin" size={16} /> : <RotateCw size={16} />}
+                    {restoreAction === session.fileName ? "Restoring..." : "Restore"}
+                  </button>
+                </div>
+              ))
+            ) : (
+              <p className="rounded-md border border-line bg-slate-950/70 p-4 text-sm text-slate-500 lg:col-span-5">
+                No save sessions found yet. Idle shutdown and manual shutdown backups will keep up to 5 local sessions.
+              </p>
+            )}
+          </div>
         </section>
 
         <section className="rounded-lg border border-line bg-panel/90 p-5 shadow-glow">
