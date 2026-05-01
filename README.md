@@ -235,7 +235,7 @@ The script:
 - Decrements the player count estimate on `UnregisterPlayers` or `ConnectionTimeout`.
 - Treats `ControlChannelClose` and `Removed address` as connection activity only, because StarRupture can log those alongside `UnregisterPlayers` for the same player.
 - Starts the idle timer only when the count estimate is 0.
-- After 10 idle minutes, requires a recent save marker before shutting down if player activity was observed in the tracked log. By default the marker must be within 20 minutes.
+- After 10 idle minutes, or after 2 idle EOS SDK config update cycles, requires a recent save marker before shutting down if player activity was observed in the tracked log. By default the marker must be within 20 minutes.
 - Save markers are `UCrMassSaveSubsystem, Saved ... loaded items` or `bSuccess: true` in the StarRupture log.
 - If no recent save marker is found, the script writes a warning and waits for the next Task Scheduler run instead of stopping EC2.
 - If the server only emits background EOS heartbeat logs and no player activity has been observed, the script does not require a save marker because there is no gameplay progress to protect.
@@ -251,7 +251,7 @@ aws ec2 stop-instances --instance-ids $InstanceId --region ap-southeast-2
 You can tune the save freshness window:
 
 ```powershell
--ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2 -IdleMinutes 10 -SaveFreshnessMinutes 20
+-ExecutionPolicy Bypass -File C:\starruptureserver\auto_shutdown.ps1 -InstanceId i-xxxxxxxxxxxxxxxxx -Region ap-southeast-2 -IdleMinutes 10 -IdleEosUpdateCycles 2 -SaveFreshnessMinutes 20
 ```
 
 ### Manual Dashboard Stop

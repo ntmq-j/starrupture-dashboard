@@ -3,6 +3,7 @@ param(
     [string]$Region = $(if ($env:AWS_REGION) { $env:AWS_REGION } else { "ap-southeast-2" }),
     [string]$ServerRoot = "C:\starruptureserver",
     [int]$IdleMinutes = 10,
+    [int]$IdleEosUpdateCycles = 2,
     [int]$SaveFreshnessMinutes = 20,
     [string]$StopServerScriptPath = "C:\starruptureserver\stop_server.ps1",
     [int]$StopServerTimeoutSeconds = 120,
@@ -36,6 +37,7 @@ function New-State {
         lastSaveUtc = $null
         lastSaveLine = ""
         observedPlayerActivity = $false
+        eosUpdateCyclesSinceIdle = 0
         stopped = $false
     }
 }
@@ -77,6 +79,7 @@ function Normalize-State {
     Ensure-StateProperty -State $State -Name "lastSaveUtc" -Value $null
     Ensure-StateProperty -State $State -Name "lastSaveLine" -Value ""
     Ensure-StateProperty -State $State -Name "observedPlayerActivity" -Value $false
+    Ensure-StateProperty -State $State -Name "eosUpdateCyclesSinceIdle" -Value 0
     Ensure-StateProperty -State $State -Name "stopped" -Value $false
 
     return $State
@@ -119,7 +122,7 @@ try {
         throw "InstanceId is required. Pass -InstanceId or set EC2_INSTANCE_ID."
     }
 
-    Write-AutoShutdownLog "Auto-shutdown check started. InstanceId=$InstanceId Region=$Region IdleMinutes=$IdleMinutes SaveFreshnessMinutes=$SaveFreshnessMinutes."
+    Write-AutoShutdownLog "Auto-shutdown check started. InstanceId=$InstanceId Region=$Region IdleMinutes=$IdleMinutes IdleEosUpdateCycles=$IdleEosUpdateCycles SaveFreshnessMinutes=$SaveFreshnessMinutes."
 
     if (-not (Test-Path $logDirectory)) {
         Write-AutoShutdownLog "Log directory not found: $logDirectory"
@@ -146,6 +149,7 @@ try {
         $state.lastSaveUtc = $null
         $state.lastSaveLine = ""
         $state.observedPlayerActivity = $false
+        $state.eosUpdateCyclesSinceIdle = 0
         Write-AutoShutdownLog "Tracking latest log: $($latestLog.FullName)"
     }
 
@@ -175,6 +179,7 @@ try {
                 $state.playerCount = [int]$state.playerCount + 1
                 $state.idleSinceUtc = $null
                 $state.idleCandidateSinceUtc = $null
+                $state.eosUpdateCyclesSinceIdle = 0
                 $state.lastPlayerJoinUtc = (Get-Date).ToUniversalTime().ToString("o")
                 $state.observedPlayerActivity = $true
                 $state.stopped = $false
@@ -189,10 +194,13 @@ try {
                 Write-AutoShutdownLog "Player left, timed out, or closed connection. Count estimate: $($state.playerCount)"
             } elseif ($line -match "ControlChannelClose|Removed address") {
                 Write-AutoShutdownLog "Connection close activity observed without changing count estimate."
+            } elseif ($line -match "ScheduleNextSDKConfigDataUpdate" -and [int]$state.playerCount -eq 0) {
+                $state.eosUpdateCyclesSinceIdle = [int]$state.eosUpdateCyclesSinceIdle + 1
+                Write-AutoShutdownLog "Idle EOS update cycle observed. Count: $($state.eosUpdateCyclesSinceIdle)/$IdleEosUpdateCycles."
             }
         }
     } else {
-        Write-AutoShutdownLog "No new log entries. Current count estimate: $($state.playerCount). IdleSinceUtc=$($state.idleSinceUtc). LastSaveUtc=$($state.lastSaveUtc). ObservedPlayerActivity=$($state.observedPlayerActivity)."
+        Write-AutoShutdownLog "No new log entries. Current count estimate: $($state.playerCount). IdleSinceUtc=$($state.idleSinceUtc). IdleEosUpdateCycles=$($state.eosUpdateCyclesSinceIdle)/$IdleEosUpdateCycles. LastSaveUtc=$($state.lastSaveUtc). ObservedPlayerActivity=$($state.observedPlayerActivity)."
     }
 
     if ([int]$state.playerCount -eq 0) {
@@ -203,8 +211,10 @@ try {
 
         $idleSince = [DateTime]::Parse($state.idleSinceUtc).ToUniversalTime()
         $idleFor = (Get-Date).ToUniversalTime() - $idleSince
+        $hasEnoughIdleTime = $idleFor.TotalMinutes -ge $IdleMinutes
+        $hasEnoughIdleEosCycles = [int]$state.eosUpdateCyclesSinceIdle -ge $IdleEosUpdateCycles
 
-        if ($idleFor.TotalMinutes -ge $IdleMinutes -and -not $state.stopped) {
+        if (($hasEnoughIdleTime -or $hasEnoughIdleEosCycles) -and -not $state.stopped) {
             if (-not $SkipRecentSaveCheck -and $state.observedPlayerActivity) {
                 $saveStatus = Get-RecentSaveStatus -State $state -FreshnessMinutes $SaveFreshnessMinutes
                 if (-not $saveStatus.IsFresh) {
@@ -218,7 +228,7 @@ try {
                 Write-AutoShutdownLog "No player activity observed in the tracked log; recent save marker is not required before idle shutdown."
             }
 
-            Write-AutoShutdownLog "Idle for $([Math]::Round($idleFor.TotalMinutes, 1)) minutes. Stopping EC2 instance $InstanceId in $Region."
+            Write-AutoShutdownLog "Idle shutdown condition met. IdleMinutes=$([Math]::Round($idleFor.TotalMinutes, 1))/$IdleMinutes IdleEosUpdateCycles=$($state.eosUpdateCyclesSinceIdle)/$IdleEosUpdateCycles. Stopping EC2 instance $InstanceId in $Region."
             if (-not $SkipServerStop) {
                 if (Test-Path $StopServerScriptPath) {
                     Write-AutoShutdownLog "Requesting game server stop."
@@ -242,6 +252,7 @@ try {
         }
     } else {
         $state.idleSinceUtc = $null
+        $state.eosUpdateCyclesSinceIdle = 0
         $state.stopped = $false
     }
 
