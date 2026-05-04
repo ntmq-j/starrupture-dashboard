@@ -36,7 +36,8 @@ function Get-ServerProcess {
 }
 
 function Get-ServerProcesses {
-    return @(Get-Process -Name $runtimeProcessName, $processName -ErrorAction SilentlyContinue)
+    return @(Get-Process -Name $runtimeProcessName, $processName -ErrorAction SilentlyContinue |
+        Sort-Object @{ Expression = { if ($_.ProcessName -eq $runtimeProcessName) { 0 } else { 1 } } }, Id)
 }
 
 try {
@@ -68,13 +69,13 @@ try {
         Write-StopLog "Trying taskkill without /F for $($remaining.Count) process(es): $remainingSummary."
 
         foreach ($item in $remaining) {
-            $output = & taskkill.exe /PID $item.Id 2>&1
+            $output = & cmd.exe /d /c "taskkill.exe /PID $($item.Id) 2>&1"
             $exitCode = $LASTEXITCODE
             $joinedOutput = ($output | Out-String).Trim()
             if ($joinedOutput) {
-                Write-StopLog "taskkill /PID $($item.Id) exitCode=$exitCode output=$joinedOutput"
+                Write-StopLog "taskkill /PID $($item.Id) ($($item.ProcessName)) exitCode=$exitCode output=$joinedOutput"
             } else {
-                Write-StopLog "taskkill /PID $($item.Id) exitCode=$exitCode."
+                Write-StopLog "taskkill /PID $($item.Id) ($($item.ProcessName)) exitCode=$exitCode."
             }
         }
 
